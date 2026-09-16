@@ -78,7 +78,11 @@
               <span class="xc-mono">{{ config && config.extractor ? config.extractor : '—' }}</span>
             </el-descriptions-item>
           </el-descriptions>
-          <div v-if="!llm.cross_check_enabled" class="xc-muted" style="margin-top: 8px; font-size: 12px">
+          <div
+            v-if="!llm.cross_check_enabled"
+            class="xc-muted"
+            style="margin-top: 8px; font-size: 12px"
+          >
             交叉校验关闭时不会有 conflict 标记，DDL 错误只能靠人工抽查发现。
           </div>
         </el-card>
@@ -121,6 +125,125 @@
             闲聊，要么是未解析（见下方盲区）。
           </div>
         </el-card>
+      </div>
+
+      <!-- 系统盲区：从主页搬过来，回答「今天系统漏了什么」 -->
+      <div class="xc-section-title">
+        <span>系统盲区</span>
+        <el-tag v-if="blindspotTotal > 0" type="warning" size="small" effect="dark">
+          {{ blindspotTotal }} 项需要关注
+        </el-tag>
+        <el-tag v-else type="success" size="small" effect="plain">暂无盲区</el-tag>
+        <span class="xc-count">避免把「今天没任务」和「系统瞎了」搞混</span>
+      </div>
+
+      <div class="xc-health-grid">
+        <el-card shadow="never" :class="{ 'xc-blindspot__cell--warn': unparsedCount > 0 }">
+          <template #header>
+            <div class="xc-card-header">
+              <span>未解析</span>
+              <span
+                class="xc-blindspot__num"
+                :class="unparsedCount > 0 ? 'xc-warn-text' : 'xc-blindspot__num--zero'"
+              >
+                {{ unparsedCount }}
+              </span>
+            </div>
+          </template>
+          <div class="xc-blindspot__desc">
+            这些消息已入库但没能抽出内容，可能是图片、格式异常，或模型判定为闲聊。
+          </div>
+        </el-card>
+
+        <el-card shadow="never" :class="{ 'xc-blindspot__cell--warn': conflictCount > 0 }">
+          <template #header>
+            <div class="xc-card-header">
+              <span>DDL 冲突</span>
+              <span
+                class="xc-blindspot__num"
+                :class="conflictCount > 0 ? 'xc-warn-text' : 'xc-blindspot__num--zero'"
+              >
+                {{ conflictCount }}
+              </span>
+            </div>
+          </template>
+          <div class="xc-blindspot__desc">
+            两个模型给出的截止时间不一致，需要人工在详情页对照原文选一个。
+          </div>
+        </el-card>
+
+        <el-card shadow="never" :class="{ 'xc-blindspot__cell--warn': lowConfidenceCount > 0 }">
+          <template #header>
+            <div class="xc-card-header">
+              <span>低置信度</span>
+              <span
+                class="xc-blindspot__num"
+                :class="lowConfidenceCount > 0 ? 'xc-warn-text' : 'xc-blindspot__num--zero'"
+              >
+                {{ lowConfidenceCount }}
+              </span>
+            </div>
+          </template>
+          <div class="xc-blindspot__desc">
+            时间是从模糊表述里推出来的（如「尽快」），卡片上标了「待确认」，别直接当准确时间用。
+          </div>
+        </el-card>
+
+        <el-card shadow="never" :class="{ 'xc-blindspot__cell--warn': gapAlerts.length > 0 }">
+          <template #header>
+            <div class="xc-card-header">
+              <span>消息缺口</span>
+              <span
+                class="xc-blindspot__num"
+                :class="gapAlerts.length > 0 ? 'xc-warn-text' : 'xc-blindspot__num--zero'"
+              >
+                {{ gapAlerts.length }}
+              </span>
+            </div>
+          </template>
+          <div class="xc-blindspot__desc">
+            某段时间完全没有消息，通常意味着连接器掉线，而不是群里真的没人说话。
+          </div>
+        </el-card>
+
+        <el-card shadow="never" :class="{ 'xc-blindspot__cell--warn': degradedToday }">
+          <template #header>
+            <div class="xc-card-header">
+              <span>今日是否降级</span>
+              <span
+                class="xc-blindspot__num"
+                :class="degradedToday ? 'xc-warn-text' : 'xc-blindspot__num--zero'"
+              >
+                {{ degradedToday ? '是' : '否' }}
+              </span>
+            </div>
+          </template>
+          <div class="xc-blindspot__desc">
+            {{
+              degradedToday
+                ? '已触发降级：只跑了规则命中的消息，今天的召回可能不完整。'
+                : '未降级，今天全量消息都走了正常流水线。'
+            }}
+          </div>
+        </el-card>
+      </div>
+
+      <div v-if="gapAlerts.length" class="xc-blindspot__gaps">
+        <div class="xc-field-label">缺口明细</div>
+        <div
+          v-for="gap in gapAlerts"
+          :key="gap.id || `${gap.group_id}-${gap.from_ts}`"
+          class="xc-gap-row"
+        >
+          <el-tag type="warning" size="small" effect="plain">缺口</el-tag>
+          <span>{{ gap.group_name || gap.group_id }}</span>
+          <span class="xc-muted">
+            {{ formatDateTime(gap.from_ts) }} → {{ formatDateTime(gap.to_ts) }}
+          </span>
+          <span class="xc-muted">
+            （{{ formatDuration(toMillis(gap.to_ts) - toMillis(gap.from_ts)) }} 无消息）
+          </span>
+        </div>
       </div>
 
       <!-- 每日 digest -->
@@ -305,9 +428,12 @@ import { Promotion, View } from '@element-plus/icons-vue'
 
 import AppHeader from '../components/AppHeader.vue'
 import { useHealthStore } from '../stores/health'
+import { useNotificationsStore } from '../stores/notifications'
 import { formatDateTime, formatDuration, timeAgoShort, toMillis } from '../utils/time'
 
 const store = useHealthStore()
+/** 盲区数据挂在列表接口的 blindspots 字段上（接口契约不变），所以也要用通知 store */
+const notificationsStore = useNotificationsStore()
 const router = useRouter()
 
 const now = ref(Date.now())
@@ -321,6 +447,21 @@ const llm = computed(() => store.health.llm || {})
 const groups = computed(() => store.health.groups || [])
 const gapAlerts = computed(() => store.health.gap_alerts || [])
 const config = computed(() => store.config)
+
+/* ---------------- 盲区（原主页 BlindSpotPanel 的内容） ---------------- */
+const blindspots = computed(() => notificationsStore.blindspots || {})
+const unparsedCount = computed(() => Number(blindspots.value.unparsed_count) || 0)
+const conflictCount = computed(() => Number(blindspots.value.conflict_count) || 0)
+const lowConfidenceCount = computed(() => Number(blindspots.value.low_confidence_count) || 0)
+const degradedToday = computed(() => !!blindspots.value.degraded_today)
+const blindspotTotal = computed(
+  () =>
+    unparsedCount.value +
+    conflictCount.value +
+    lowConfidenceCount.value +
+    gapAlerts.value.length +
+    (degradedToday.value ? 1 : 0)
+)
 
 const groupWhitelist = computed(() =>
   config.value && Array.isArray(config.value.group_whitelist) ? config.value.group_whitelist : []
@@ -351,7 +492,8 @@ function formatNumber(n) {
 
 async function load() {
   now.value = Date.now()
-  await Promise.all([store.load(), store.loadConfig()])
+  // 通知列表一起拉：盲区数据由它的 blindspots 字段提供（接口契约不变）
+  await Promise.all([store.load(), store.loadConfig(), notificationsStore.load()])
 }
 
 async function previewDigest() {
@@ -427,6 +569,20 @@ onBeforeUnmount(() => {
 .xc-warn-text {
   color: var(--xc-warning);
   font-weight: 600;
+}
+
+/* 盲区卡片：有值时整卡变橙色（el-card 自己的边框要覆盖掉） */
+.xc-blindspot__cell--warn {
+  border-color: #f3d19e;
+  background: #fdf6ec;
+}
+
+.xc-blindspot__gaps {
+  margin-top: 14px;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid var(--xc-border);
+  border-radius: 8px;
 }
 
 .xc-digest {

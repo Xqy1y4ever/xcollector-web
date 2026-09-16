@@ -33,9 +33,9 @@
 
         <el-input
           v-model="searchText"
+          class="xc-toolbar__search"
           placeholder="搜索标题 / 摘要 / 证据原文"
           clearable
-          style="max-width: 280px"
           @keyup.enter="applyFilter"
           @clear="applyFilter"
         >
@@ -50,9 +50,6 @@
 
         <el-tag v-if="unreadCount > 0" type="primary" size="small" effect="plain">
           未读 {{ unreadCount }}
-        </el-tag>
-        <el-tag v-if="conflictCount > 0" type="danger" size="small" effect="dark">
-          DDL 冲突 {{ conflictCount }}
         </el-tag>
         <span class="xc-muted" style="font-size: 12px">共 {{ totalCount }} 条</span>
         <el-tooltip content="每 60 秒自动增量刷新一次" placement="top">
@@ -78,29 +75,25 @@
         </el-empty>
 
         <template v-else>
-          <template v-for="group in groups" :key="group.key">
-            <div class="xc-section-title">
-              <span>{{ group.label }}</span>
-              <span class="xc-count">{{ group.items.length }} 条</span>
-              <el-tag v-if="group.key === 'overdue'" type="warning" size="small" effect="plain">
-                需要确认是否还能补交
-              </el-tag>
-            </div>
-            <NotificationCard
-              v-for="item in group.items"
-              :key="item.id"
-              :notification="item"
-              :now="now"
-              @open="openDetail"
-              @toggle-read="onToggleRead"
-              @archive="onArchive"
-            />
-          </template>
+          <div class="xc-list">
+            <template v-for="group in groups" :key="group.key">
+              <div class="xc-section-title">
+                <span>{{ group.label }}</span>
+                <span class="xc-count">{{ group.items.length }} 条</span>
+              </div>
+              <NotificationCard
+                v-for="item in group.items"
+                :key="item.id"
+                :notification="item"
+                :now="now"
+                @open="openDetail"
+                @toggle-read="onToggleRead"
+                @archive="onArchive"
+              />
+            </template>
+          </div>
         </template>
       </div>
-
-      <!-- 盲区面板 -->
-      <BlindSpotPanel :blindspots="store.blindspots" />
 
       <div class="xc-muted" style="margin-top: 18px; font-size: 12px; text-align: center">
         本页所有解析结果都可点开核对原文证据 · 任何 DDL 都附「结构化时间 + 原文时间表达 + 置信度」三元组
@@ -122,7 +115,6 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 
 import AppHeader from '../components/AppHeader.vue'
-import BlindSpotPanel from '../components/BlindSpotPanel.vue'
 import NotificationCard from '../components/NotificationCard.vue'
 import NotificationDetail from '../components/NotificationDetail.vue'
 import { useHealthStore } from '../stores/health'
@@ -146,7 +138,6 @@ let tickTimer = null
 const loading = computed(() => store.loading)
 const notifications = computed(() => store.notifications)
 const unreadCount = computed(() => store.unreadCount)
-const conflictCount = computed(() => store.conflictCount)
 const totalCount = computed(() => store.notifications.length)
 const lastSyncedAt = computed(() => store.lastSyncedAt)
 
@@ -249,5 +240,26 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+.xc-toolbar__search {
+  max-width: 280px;
+}
+
+/* 移动端：列表左右内边距由 .xc-page 给 10px，工具栏纵向排布，输入框占满宽度 */
+@media (max-width: 768px) {
+  .xc-toolbar {
+    gap: 8px;
+  }
+
+  .xc-toolbar__search {
+    flex: 1 1 100%;
+    max-width: none;
+    order: 3;
+  }
+
+  .xc-toolbar__spacer {
+    display: none;
+  }
 }
 </style>

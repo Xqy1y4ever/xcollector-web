@@ -1,108 +1,49 @@
 <template>
   <div
     class="xc-card"
-    :class="{
-      'xc-card--conflict': notification.conflict,
-      'xc-card--archived': notification.status === 'archived',
-      'xc-card--unconfirmed': due.level === 'unconfirmed'
-    }"
+    :class="{ 'xc-card--archived': notification.status === 'archived' }"
     @click="emit('open', notification.id)"
   >
-    <!-- 左侧一列：大号 DDL + 原文时间表达 -->
-    <div class="xc-card__due">
-      <div class="xc-card__due-main" :class="dueMainClass">
-        <span v-if="due.prefix" class="xc-tilde">{{ due.prefix }}</span>{{ due.text }}
-      </div>
-      <div v-if="due.relative" class="xc-card__due-rel">{{ due.relative }}</div>
-      <div class="xc-card__due-text" :title="due.original || '后端未给出原文时间表达'">
-        <template v-if="due.original">原文「{{ due.original }}」</template>
-        <template v-else>原文时间未给出</template>
-      </div>
-      <el-tag
-        v-if="due.level === 'unconfirmed'"
-        size="small"
-        type="info"
-        effect="plain"
-        style="margin-top: 6px"
+    <!-- 左侧固定宽度 DDL 列：3px 色条 + 上行日期 + 下行时间 -->
+    <div class="xc-due" :class="`xc-due--${due.level}`">
+      <div class="xc-due__date" :title="due.dateFull">{{ due.dateTop }}</div>
+      <!-- due_at 为 null 时下行是 due_text 原文，可能很长，用 tooltip 兜全文 -->
+      <el-tooltip
+        v-if="due.timeTooltip"
+        :content="due.timeTooltip"
+        placement="top"
+        :show-after="200"
       >
-        待确认
-      </el-tag>
+        <div class="xc-due__time">{{ due.timeBottom }}</div>
+      </el-tooltip>
+      <div v-else class="xc-due__time">{{ due.timeBottom }}</div>
     </div>
 
-    <!-- 右侧正文 -->
+    <!-- 右侧三行：标题 / 摘要 / 来源·位置 + 标签 -->
     <div class="xc-card__body">
-      <div class="xc-card__title-row">
-        <span v-if="!notification.read" class="xc-card__unread-dot" title="未读" />
-        <span class="xc-card__title">{{ notification.title }}</span>
+      <div class="xc-card__row xc-card__row--title">
+        <span
+          v-if="!notification.read"
+          class="xc-card__unread-dot"
+          title="未读"
+          aria-label="未读"
+        />
+        <span class="xc-card__title" :title="notification.title">{{ notification.title }}</span>
+      </div>
+
+      <!-- summary 为空时整行不渲染，卡片自动变矮 -->
+      <div v-if="hasSummary" class="xc-card__row xc-card__row--summary">
+        <span class="xc-card__summary" :title="notification.summary">{{ notification.summary }}</span>
+      </div>
+
+      <div class="xc-card__row xc-card__row--meta">
+        <span class="xc-card__source" :title="sourceText">{{ sourceText }}</span>
         <div class="xc-card__tags">
-          <el-tag v-if="notification.conflict" type="danger" size="small" effect="dark">
-            DDL 冲突
-          </el-tag>
-          <el-tag
-            v-if="notification.manually_edited"
-            type="success"
-            size="small"
-            effect="plain"
-          >
-            已人工确认
-          </el-tag>
-          <el-tag v-if="notification.status === 'expired'" type="warning" size="small" effect="plain">
-            已过期
-          </el-tag>
-          <el-tag v-if="notification.status === 'archived'" type="info" size="small" effect="plain">
-            已归档
-          </el-tag>
-          <el-tag v-if="attachmentCount > 0" type="info" size="small" effect="plain">
-            <el-icon><Paperclip /></el-icon>
-            {{ attachmentCount }}
-          </el-tag>
+          <span v-if="notification.conflict" class="xc-tag xc-tag--danger">DDL 冲突</span>
+          <span v-if="notification.manually_edited" class="xc-tag xc-tag--success">已人工确认</span>
+          <span v-if="isLowConfidence" class="xc-tag xc-tag--info">待确认</span>
+          <span class="xc-card__link">原文对照 ›</span>
         </div>
-      </div>
-
-      <div v-if="notification.summary" class="xc-card__summary">{{ notification.summary }}</div>
-
-      <!-- 核心：evidence 原文，直接摊在卡片上 -->
-      <el-tooltip
-        v-if="notification.evidence"
-        :content="notification.evidence"
-        placement="top"
-        :show-after="150"
-        popper-class="xc-evidence-tooltip"
-      >
-        <div class="xc-evidence" @click.stop>
-          <span class="xc-evidence__label">证据</span>{{ notification.evidence }}
-        </div>
-      </el-tooltip>
-      <div v-else class="xc-evidence xc-evidence--missing" @click.stop>
-        <span class="xc-evidence__label">证据</span>后端未返回 evidence —— 该条抽取缺少原文依据
-      </div>
-
-      <div class="xc-card__meta">
-        <span>{{ notification.group_name }}</span>
-        <span class="xc-dot">·</span>
-        <span>{{ notification.sender_name }}</span>
-        <span class="xc-dot">·</span>
-        <span>{{ sincePublish }}</span>
-        <template v-if="candidateCount > 1">
-          <span class="xc-dot">·</span>
-          <span>{{ candidateCount }} 个模型候选</span>
-        </template>
-      </div>
-
-      <div class="xc-card__actions" @click.stop>
-        <el-button size="small" text type="primary" @click="emit('toggle-read', notification.id)">
-          {{ notification.read ? '标为未读' : '标为已读' }}
-        </el-button>
-        <el-button
-          size="small"
-          text
-          type="info"
-          :disabled="notification.status === 'archived'"
-          @click="emit('archive', notification.id)"
-        >
-          这不是通知
-        </el-button>
-        <el-button size="small" text @click="emit('open', notification.id)">查看原文对照</el-button>
       </div>
     </div>
   </div>
@@ -110,10 +51,17 @@
 
 <script setup>
 import { computed } from 'vue'
-import { Paperclip } from '@element-plus/icons-vue'
 
-import { buildDueDisplay, describeSincePublish, toMillis } from '../utils/time'
+import { dueLevel, formatDate, formatTime, formatWeekday, toMillis } from '../utils/time'
 
+/**
+ * 紧凑通知卡片。
+ *
+ * 刻意不再渲染 evidence 原文、附件图标、「距发布 X 小时」——这三块全部收进详情抽屉。
+ * 代价是「一眼看到结论依据」变成「点开才看到」，所以 conflict /
+ * 低置信度这两类风险必须在卡片上保持醒目（见第三行的标签）。
+ * 颜色分级统一走 utils/time.js 的 dueLevel()，这里不做任何重复判断。
+ */
 const props = defineProps({
   notification: {
     type: Object,
@@ -127,39 +75,57 @@ const props = defineProps({
 
 const emit = defineEmits(['open', 'toggle-read', 'archive'])
 
-const due = computed(() => buildDueDisplay(props.notification, props.now))
+const dueMs = computed(() => toMillis(props.notification.due_at))
 
-const dueMainClass = computed(() => {
-  if (due.value.level === 'unconfirmed') return 'xc-card__due-main--unconfirmed'
-  const ms = toMillis(props.notification.due_at)
-  if (ms === null) return 'xc-card__due-main--unconfirmed'
-  const diff = ms - props.now
-  if (diff < 0) return 'xc-card__due-main--unconfirmed'
-  if (diff < 24 * 3600 * 1000) return 'xc-card__due-main--soon'
-  if (diff > 7 * 24 * 3600 * 1000) return 'xc-card__due-main--later'
-  return ''
+const due = computed(() => {
+  const n = props.notification || {}
+  const ms = dueMs.value
+  const level = dueLevel(n.due_at, props.now)
+  const dueText = n.due_text || ''
+
+  if (ms === null) {
+    // due_at 为 null：上行「待确认」，下行 due_text 原文（可能较长，省略号 + tooltip）
+    return {
+      level,
+      dateTop: '待确认',
+      dateFull: '未解析出确定时间',
+      timeBottom: dueText || '—',
+      timeTooltip: dueText ? `原文时间：${dueText}` : ''
+    }
+  }
+
+  const dateTop = `${formatDate(ms, { withYear: false })} ${formatWeekday(ms)}`
+  const timeBottom = formatTime(ms)
+  return {
+    level,
+    dateTop,
+    dateFull: `${formatDate(ms)} ${formatWeekday(ms)} ${timeBottom}`,
+    timeBottom,
+    // 有确定时间时下行永远是 HH:mm，不会被截断，不需要 tooltip
+    timeTooltip: ''
+  }
 })
 
-const sincePublish = computed(() =>
-  describeSincePublish(props.notification.source_ts || props.notification.created_at, props.now)
-)
+const hasSummary = computed(() => {
+  const s = props.notification.summary
+  return typeof s === 'string' && s.trim() !== ''
+})
 
-const attachmentCount = computed(() =>
-  Array.isArray(props.notification.attachments) ? props.notification.attachments.length : 0
-)
+/** 来源 = group_name（回退 group_id）；位置 = sender_name（回退 sender_id） */
+const sourceText = computed(() => {
+  const n = props.notification || {}
+  const group = n.group_name || n.group_id || '未知群'
+  const sender = n.sender_name || n.sender_id || '未知发布者'
+  return `${group} · ${sender}`
+})
 
-const candidateCount = computed(() =>
-  Array.isArray(props.notification.candidates) ? props.notification.candidates.length : 0
-)
+/** 低置信度只在「确实有结构化时间」时才提示；due_at 为 null 时上行已经写了「待确认」 */
+const isLowConfidence = computed(() => {
+  if (dueMs.value === null) return false
+  const c = props.notification.due_confidence
+  if (c === null || c === undefined) return false
+  const num = Number(c)
+  if (!Number.isFinite(num)) return false
+  return num < 0.6
+})
 </script>
-
-<style scoped>
-.xc-tilde {
-  margin-right: 1px;
-}
-
-.xc-evidence--missing {
-  border-left-color: var(--xc-warning);
-  color: var(--xc-warning);
-}
-</style>

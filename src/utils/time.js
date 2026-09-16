@@ -245,6 +245,46 @@ export function confidenceLevel(confidence) {
   return 'unconfirmed'
 }
 
+/**
+ * DDL 剩余时间分级 —— **全项目唯一**的一处分级判断。
+ *
+ * 组件里不要自己写 `diff < 24h` 这类比较，统一调用这里，避免卡片 / 分组 / 详情
+ * 三处颜色规则漂移。
+ *
+ * | level     | 条件              | CSS 变量            | 色值      |
+ * |-----------|-------------------|---------------------|-----------|
+ * | overdue   | dueAt < now       | --xc-due-overdue    | #d93026   |
+ * | urgent    | 剩余 <= 24 小时   | --xc-due-urgent     | #e8590c   |
+ * | soon      | 剩余 <= 3 天      | --xc-due-soon       | #d99100   |
+ * | week      | 剩余 <= 7 天      | --xc-due-week       | #3b82c4   |
+ * | later     | 剩余 > 7 天       | --xc-due-later      | #4b8b5a   |
+ * | none      | dueAt 为 null     | --xc-due-none       | #8a8f99   |
+ *
+ * 硬约束：`due_at` 为 null 时**必须**返回 'none'（灰），
+ * 绝不允许因为取不到值就落到「看起来紧急」的档位上。
+ *
+ * @param {number|string|Date|null|undefined} dueAt
+ * @param {number} [now] 毫秒时间戳，便于测试注入固定锚点
+ * @returns {'overdue'|'urgent'|'soon'|'week'|'later'|'none'}
+ */
+export function dueLevel(dueAt, now = Date.now()) {
+  const ms = toMillis(dueAt)
+  if (ms === null) return 'none'
+  const base = toMillis(now)
+  if (base === null) return 'none'
+
+  const diff = ms - base
+  if (diff < 0) return 'overdue'
+
+  const hour = 3600 * 1000
+  const day = 24 * hour
+
+  if (diff <= 24 * hour) return 'urgent'
+  if (diff <= 3 * day) return 'soon'
+  if (diff <= 7 * day) return 'week'
+  return 'later'
+}
+
 /** 置信度对应的中文标签 */
 export function confidenceLabel(confidence) {
   switch (confidenceLevel(confidence)) {
@@ -328,7 +368,7 @@ export const DUE_GROUP_ORDER = ['overdue', 'today', 'thisweek', 'later', 'nodate
 export const DUE_GROUP_LABELS = {
   overdue: '已过期',
   today: '今天',
-  thisweek: '本周',
+  thisweek: '几天内',
   later: '更晚',
   nodate: '无确定时间'
 }
@@ -341,11 +381,12 @@ export function groupKeyOf(notification, now = Date.now()) {
 
   if (dueMs === null) return 'nodate'
   if (status === 'expired') return 'overdue'
-  if (dueMs < now) return 'overdue'
-  if (status === 'archived' && dueMs < now) return 'overdue'
 
+  // 分组口径跟随唯一的 dueLevel()，保证分组标题和卡片颜色永远一致
+  const level = dueLevel(dueMs, now)
+  if (level === 'overdue') return 'overdue'
   if (isSameDay(dueMs, now)) return 'today'
-  if (dueMs <= endOfWeek(now)) return 'thisweek'
+  if (level === 'urgent' || level === 'soon' || level === 'week') return 'thisweek'
   return 'later'
 }
 
