@@ -10,14 +10,6 @@ import {
   BACKEND_DOWN_MESSAGE
 } from '../api/client'
 
-const DEFAULT_BLINDSOTS = {
-  unparsed_count: 0,
-  conflict_count: 0,
-  low_confidence_count: 0,
-  gap_alerts: [],
-  degraded_today: false
-}
-
 /** 把后端单条通知补全成前端期望的完整形状，避免模板里到处写 `?.` */
 function normalizeNotification(raw) {
   if (!raw || typeof raw !== 'object') return null
@@ -59,8 +51,6 @@ export const useNotificationsStore = defineStore('notifications', {
     serverTime: Date.now(),
     /** 本地「最后成功同步」的时间戳，头部显示用 */
     lastSyncedAt: null,
-    /** blindspots 面板数据 */
-    blindspots: { ...DEFAULT_BLINDSOTS },
     /** 列表加载中 */
     loading: false,
     /** 增删改等操作中 */
@@ -91,18 +81,6 @@ export const useNotificationsStore = defineStore('notifications', {
     hasError: (state) => !!state.error,
     /** 数据是否为空（用来决定显示 el-empty） */
     isEmpty: (state) => !state.loading && state.notifications.length === 0,
-    /** 盲区面板是否全部为 0（决定要不要视觉提示） */
-    blindspotIsClean: (state) => {
-      const b = state.blindspots || DEFAULT_BLINDSOTS
-      const gaps = Array.isArray(b.gap_alerts) ? b.gap_alerts.length : 0
-      return (
-        !b.unparsed_count &&
-        !b.conflict_count &&
-        !b.low_confidence_count &&
-        !gaps &&
-        !b.degraded_today
-      )
-    },
     getById: (state) => (id) => state.notifications.find((n) => n.id === String(id)) || null
   },
 
@@ -114,8 +92,8 @@ export const useNotificationsStore = defineStore('notifications', {
         ? data.notifications.map(normalizeNotification).filter(Boolean)
         : []
       this.serverTime = data.server_time || Date.now()
-      this.blindspots = { ...DEFAULT_BLINDSOTS, ...(data.blindspots || {}) }
-      if (!Array.isArray(this.blindspots.gap_alerts)) this.blindspots.gap_alerts = []
+      // 说明：后端 /api/notifications 响应里的 blindspots 字段已被删除（契约第 8 节），
+      // 盲区数据现在归 bot 的 /api/status，由 stores/health.js 持有。这里不再解析它。
       this.lastSyncedAt = Date.now()
     },
 

@@ -1,19 +1,37 @@
 <template>
   <div>
-    <AppHeader :loading="loading" :last-synced-at="lastLoadedAt" @refresh="load" />
+    <AppHeader :loading="loading" :last-synced-at="lastLoadedAt" @refresh="load(true)" />
 
     <div class="xc-page">
+      <!-- ① bot 不可达：整个页面的数据都来自 bot，先把这件事说清楚，不要白屏 -->
       <el-alert
         v-if="store.error"
         type="error"
         :closable="false"
         show-icon
         :title="store.error"
-        description="请确认 FastAPI 已在 127.0.0.1:8000 运行。下面的卡片可能是不完整的默认值。"
+        description="本页的 OneBot / LLM / 流水线 / 盲区 / 缺口 / digest 全部来自 bot 的 /api/status。请确认 bot 进程已在 127.0.0.1:8082 运行（vite 代理 /bot → 该地址）。下面的卡片是默认值，不代表真实状态。"
         style="margin-top: 16px"
       />
 
-      <!-- 三张主卡片 -->
+      <!-- ② 后端不可达：bot 活着但存不进去，这是最要紧的运维信号，置顶报警 -->
+      <el-alert
+        v-if="backendCard.level === 'warning'"
+        type="warning"
+        :closable="false"
+        show-icon
+        :title="`后端可达性：${backendCard.title}（${backendCard.detail}）`"
+        style="margin-top: 16px"
+      >
+        <div style="margin-top: 4px; font-size: 12.5px">
+          具体探针结果：<span class="xc-mono">{{ backendCard.probe }}</span>
+          <template v-if="backendCard.baseUrl">
+            · bot 配置的后端地址 <span class="xc-mono">{{ backendCard.baseUrl }}</span>
+          </template>
+        </div>
+      </el-alert>
+
+      <!-- 主卡片 -->
       <div class="xc-health-grid" style="margin-top: 18px">
         <el-card shadow="never">
           <template #header>
@@ -46,6 +64,9 @@
                 {{ onebot.reconnect_count ?? 0 }}
               </span>
             </el-descriptions-item>
+            <el-descriptions-item v-if="onebot.last_error" label="最近错误">
+              <span class="xc-warn-text">{{ onebot.last_error }}</span>
+            </el-descriptions-item>
           </el-descriptions>
         </el-card>
 
@@ -53,12 +74,19 @@
           <template #header>
             <div class="xc-card-header">
               <span>LLM 配置</span>
-              <el-tag :type="llm.enabled ? 'success' : 'info'" size="small" effect="plain">
-                {{ llm.enabled ? '已启用' : '未启用' }}
+              <el-tag
+                :type="llm.extractor === 'llm' ? 'success' : 'info'"
+                size="small"
+                effect="plain"
+              >
+                {{ llm.extractor === 'llm' ? 'LLM 抽取' : llm.extractor || '未配置' }}
               </el-tag>
             </div>
           </template>
           <el-descriptions :column="1" size="small" border>
+            <el-descriptions-item label="抽取器">
+              <span class="xc-mono">{{ llm.extractor || '—' }}</span>
+            </el-descriptions-item>
             <el-descriptions-item label="主模型">
               <span class="xc-mono">{{ llm.primary_model || '—' }}</span>
             </el-descriptions-item>
@@ -74,8 +102,10 @@
                 {{ llm.cross_check_enabled ? '开启（双模型比对 DDL）' : '关闭（无冲突检测）' }}
               </el-tag>
             </el-descriptions-item>
-            <el-descriptions-item label="抽取器">
-              <span class="xc-mono">{{ config && config.extractor ? config.extractor : '—' }}</span>
+            <el-descriptions-item label="图片理解（VLM）">
+              <el-tag :type="llm.vlm_enabled ? 'success' : 'info'" size="small" effect="plain">
+                {{ llm.vlm_enabled ? '已启用' : '未启用' }}
+              </el-tag>
             </el-descriptions-item>
           </el-descriptions>
           <div
@@ -91,62 +121,202 @@
           <template #header>
             <div class="xc-card-header">
               <span>今日流水线</span>
-              <el-tag v-if="pipeline.today_degraded > 0" type="warning" size="small" effect="dark">
+              <el-tag v-if="pipeline.degradedToday" type="warning" size="small" effect="dark">
                 已降级
               </el-tag>
             </div>
           </template>
           <el-descriptions :column="2" size="small" border>
             <el-descriptions-item label="入库消息">
-              {{ pipeline.today_ingested }}
+              {{ pipeline.ingested }}
             </el-descriptions-item>
             <el-descriptions-item label="抽出条目">
-              {{ pipeline.today_extracted }}
+              {{ pipeline.extracted }}
             </el-descriptions-item>
             <el-descriptions-item label="未解析">
-              <span :class="{ 'xc-warn-text': pipeline.today_unparsed > 0 }">
-                {{ pipeline.today_unparsed }}
+              <span :class="{ 'xc-warn-text': pipeline.unparsed > 0 }">
+                {{ pipeline.unparsed }}
               </span>
             </el-descriptions-item>
             <el-descriptions-item label="DDL 冲突">
-              <span :class="{ 'xc-warn-text': pipeline.today_conflicts > 0 }">
-                {{ pipeline.today_conflicts }}
+              <span :class="{ 'xc-warn-text': pipeline.conflicts > 0 }">
+                {{ pipeline.conflicts }}
               </span>
             </el-descriptions-item>
             <el-descriptions-item label="降级次数">
-              {{ pipeline.today_degraded }}
+              {{ pipeline.degraded }}
             </el-descriptions-item>
             <el-descriptions-item label="LLM tokens">
-              {{ formatNumber(pipeline.today_llm_tokens) }}
+              {{ formatNumber(pipeline.llmTokens) }}
             </el-descriptions-item>
           </el-descriptions>
           <div class="xc-muted" style="margin-top: 8px; font-size: 12px">
-            入库 {{ pipeline.today_ingested }} 条 → 抽出 {{ pipeline.today_extracted }} 条，中间差额要么是
+            入库 {{ pipeline.ingested }} 条 → 抽出 {{ pipeline.extracted }} 条，中间差额要么是
             闲聊，要么是未解析（见下方盲区）。
+          </div>
+        </el-card>
+
+        <!-- 后端可达性：bot 活着但后端挂了 ⇒ 消息存不进去，必须醒目 -->
+        <el-card
+          shadow="never"
+          :class="{ 'xc-blindspot__cell--warn': backendCard.level === 'warning' }"
+        >
+          <template #header>
+            <div class="xc-card-header">
+              <span>后端可达性</span>
+              <el-tag
+                :type="backendTag.type"
+                size="small"
+                :effect="backendTag.effect"
+              >
+                {{ backendCard.reachable ? '可达' : backendCard.level === 'unknown' ? '未知' : '不可达' }}
+              </el-tag>
+            </div>
+          </template>
+          <el-descriptions :column="1" size="small" border>
+            <el-descriptions-item label="状态">
+              <span :class="backendCard.level === 'warning' ? 'xc-danger-text' : ''">
+                {{ backendCard.title }}
+              </span>
+            </el-descriptions-item>
+            <el-descriptions-item label="本页探针">
+              <span class="xc-mono xc-muted">{{ backendCard.probe }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="bot 自报">
+              <el-tag
+                v-if="backendCard.botReported !== null"
+                :type="backendCard.botReported ? 'success' : 'danger'"
+                size="small"
+                effect="plain"
+              >
+                {{ backendCard.botReported ? '可达' : '不可达' }}
+              </el-tag>
+              <span v-else class="xc-muted">未上报</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="后端地址">
+              <span class="xc-mono">{{ backendCard.baseUrl || '—' }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item v-if="backendCounts" label="存储计数">
+              <span class="xc-mono">
+                消息 {{ backendCounts.messages ?? '—' }} · 通知
+                {{ backendCounts.notifications ?? '—' }} · 附件
+                {{ backendCounts.attachments ?? '—' }}
+              </span>
+            </el-descriptions-item>
+          </el-descriptions>
+          <div
+            v-if="backendCard.level === 'warning'"
+            class="xc-danger-text"
+            style="margin-top: 8px; font-size: 12px"
+          >
+            {{ backendCard.detail }}
+          </div>
+          <div v-else class="xc-muted" style="margin-top: 8px; font-size: 12px">
+            {{ backendCard.detail }}
+          </div>
+        </el-card>
+
+        <!-- digest 配置（原来是 /api/config/meta，现在归 bot） -->
+        <el-card shadow="never">
+          <template #header>
+            <div class="xc-card-header">
+              <span>每日 digest</span>
+              <el-tag :type="digestInfo.tagType" size="small" effect="plain">
+                {{ digestInfo.enabled ? '已启用' : '未启用' }}
+              </el-tag>
+            </div>
+          </template>
+          <el-descriptions :column="1" size="small" border>
+            <el-descriptions-item label="推送时间">
+              {{ digestInfo.time || '—' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="目标 QQ">
+              <span class="xc-mono">{{ digestInfo.targetQq || '—' }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="今天是否已发">
+              <el-tag :type="digestInfo.sentToday ? 'success' : 'info'" size="small" effect="plain">
+                {{ digestInfo.sentToday ? '已发送' : '尚未发送' }}
+              </el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="统计日期">
+              {{ store.day || '—' }}
+            </el-descriptions-item>
+          </el-descriptions>
+        </el-card>
+
+        <!-- 配置快照：白名单现在读 bot status.whitelist，后端的 /api/config/meta 已下线 -->
+        <el-card shadow="never">
+          <template #header>
+            <div class="xc-card-header">
+              <span>配置快照</span>
+              <el-tag v-if="whitelist.sender_mode" size="small" effect="plain">
+                发送者白名单：{{ whitelist.sender_mode }}
+              </el-tag>
+            </div>
+          </template>
+          <el-descriptions :column="1" size="small" border>
+            <el-descriptions-item label="群白名单">
+              <template v-if="whitelist.groups.length">
+                <el-tag
+                  v-for="(g, idx) in whitelist.groups"
+                  :key="groupKey(g, idx)"
+                  size="small"
+                  effect="plain"
+                  style="margin: 2px 4px 2px 0"
+                >
+                  {{ groupLabel(g) }}
+                  <span v-if="g.group_id" class="xc-mono xc-muted">({{ g.group_id }})</span>
+                </el-tag>
+              </template>
+              <span v-else class="xc-muted">未配置</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="发送者白名单">
+              <template v-if="whitelist.senders.length">
+                <el-tag
+                  v-for="(s, idx) in whitelist.senders"
+                  :key="senderKey(s, idx)"
+                  size="small"
+                  effect="plain"
+                  style="margin: 2px 4px 2px 0"
+                >
+                  {{ s.name || s.sender_id || '未知' }}
+                </el-tag>
+              </template>
+              <span v-else class="xc-muted">未配置</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="服务器时间">
+              {{ formatDateTime(store.status.server_time) }}
+            </el-descriptions-item>
+          </el-descriptions>
+          <div v-if="store.error" class="xc-muted" style="margin-top: 8px; font-size: 12px">
+            bot 未运行或不可达，白名单快照取不到。
           </div>
         </el-card>
       </div>
 
-      <!-- 系统盲区：从主页搬过来，回答「今天系统漏了什么」 -->
+      <!-- 系统盲区：回答「今天系统漏了什么」 -->
       <div class="xc-section-title">
         <span>系统盲区</span>
         <el-tag v-if="blindspotTotal > 0" type="warning" size="small" effect="dark">
           {{ blindspotTotal }} 项需要关注
         </el-tag>
         <el-tag v-else type="success" size="small" effect="plain">暂无盲区</el-tag>
+        <span v-if="blindspotWindowDays" class="xc-count">
+          统计窗口：最近 {{ blindspotWindowDays }} 天
+        </span>
         <span class="xc-count">避免把「今天没任务」和「系统瞎了」搞混</span>
       </div>
 
       <div class="xc-health-grid">
-        <el-card shadow="never" :class="{ 'xc-blindspot__cell--warn': unparsedCount > 0 }">
+        <el-card shadow="never" :class="{ 'xc-blindspot__cell--warn': counts.unparsed > 0 }">
           <template #header>
             <div class="xc-card-header">
               <span>未解析</span>
               <span
                 class="xc-blindspot__num"
-                :class="unparsedCount > 0 ? 'xc-warn-text' : 'xc-blindspot__num--zero'"
+                :class="counts.unparsed > 0 ? 'xc-warn-text' : 'xc-blindspot__num--zero'"
               >
-                {{ unparsedCount }}
+                {{ counts.unparsed }}
               </span>
             </div>
           </template>
@@ -155,15 +325,15 @@
           </div>
         </el-card>
 
-        <el-card shadow="never" :class="{ 'xc-blindspot__cell--warn': conflictCount > 0 }">
+        <el-card shadow="never" :class="{ 'xc-blindspot__cell--warn': counts.conflicts > 0 }">
           <template #header>
             <div class="xc-card-header">
               <span>DDL 冲突</span>
               <span
                 class="xc-blindspot__num"
-                :class="conflictCount > 0 ? 'xc-warn-text' : 'xc-blindspot__num--zero'"
+                :class="counts.conflicts > 0 ? 'xc-warn-text' : 'xc-blindspot__num--zero'"
               >
-                {{ conflictCount }}
+                {{ counts.conflicts }}
               </span>
             </div>
           </template>
@@ -172,15 +342,15 @@
           </div>
         </el-card>
 
-        <el-card shadow="never" :class="{ 'xc-blindspot__cell--warn': lowConfidenceCount > 0 }">
+        <el-card shadow="never" :class="{ 'xc-blindspot__cell--warn': counts.lowConfidence > 0 }">
           <template #header>
             <div class="xc-card-header">
               <span>低置信度</span>
               <span
                 class="xc-blindspot__num"
-                :class="lowConfidenceCount > 0 ? 'xc-warn-text' : 'xc-blindspot__num--zero'"
+                :class="counts.lowConfidence > 0 ? 'xc-warn-text' : 'xc-blindspot__num--zero'"
               >
-                {{ lowConfidenceCount }}
+                {{ counts.lowConfidence }}
               </span>
             </div>
           </template>
@@ -189,15 +359,15 @@
           </div>
         </el-card>
 
-        <el-card shadow="never" :class="{ 'xc-blindspot__cell--warn': gapAlerts.length > 0 }">
+        <el-card shadow="never" :class="{ 'xc-blindspot__cell--warn': counts.gaps > 0 }">
           <template #header>
             <div class="xc-card-header">
               <span>消息缺口</span>
               <span
                 class="xc-blindspot__num"
-                :class="gapAlerts.length > 0 ? 'xc-warn-text' : 'xc-blindspot__num--zero'"
+                :class="counts.gaps > 0 ? 'xc-warn-text' : 'xc-blindspot__num--zero'"
               >
-                {{ gapAlerts.length }}
+                {{ counts.gaps }}
               </span>
             </div>
           </template>
@@ -206,21 +376,21 @@
           </div>
         </el-card>
 
-        <el-card shadow="never" :class="{ 'xc-blindspot__cell--warn': degradedToday }">
+        <el-card shadow="never" :class="{ 'xc-blindspot__cell--warn': counts.degraded }">
           <template #header>
             <div class="xc-card-header">
               <span>今日是否降级</span>
               <span
                 class="xc-blindspot__num"
-                :class="degradedToday ? 'xc-warn-text' : 'xc-blindspot__num--zero'"
+                :class="counts.degraded ? 'xc-warn-text' : 'xc-blindspot__num--zero'"
               >
-                {{ degradedToday ? '是' : '否' }}
+                {{ counts.degraded ? '是' : '否' }}
               </span>
             </div>
           </template>
           <div class="xc-blindspot__desc">
             {{
-              degradedToday
+              counts.degraded
                 ? '已触发降级：只跑了规则命中的消息，今天的召回可能不完整。'
                 : '未降级，今天全量消息都走了正常流水线。'
             }}
@@ -230,11 +400,7 @@
 
       <div v-if="gapAlerts.length" class="xc-blindspot__gaps">
         <div class="xc-field-label">缺口明细</div>
-        <div
-          v-for="gap in gapAlerts"
-          :key="gap.id || `${gap.group_id}-${gap.from_ts}`"
-          class="xc-gap-row"
-        >
+        <div v-for="gap in gapAlerts" :key="gapKey(gap)" class="xc-gap-row">
           <el-tag type="warning" size="small" effect="plain">缺口</el-tag>
           <span>{{ gap.group_name || gap.group_id }}</span>
           <span class="xc-muted">
@@ -246,16 +412,10 @@
         </div>
       </div>
 
-      <!-- 每日 digest -->
+      <!-- 每日 digest：预览与发送都打 bot（后端已不再提供这两个接口） -->
       <div class="xc-section-title">
         <span>每日 digest</span>
-        <span class="xc-count">
-          {{
-            config && config.digest_enabled
-              ? `已启用 · 每天 ${config.digest_time || '—'} 推送`
-              : '未启用'
-          }}
-        </span>
+        <span class="xc-count">{{ digestInfo.statusText }}</span>
       </div>
       <el-card shadow="never">
         <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center">
@@ -268,21 +428,22 @@
             发送到 QQ
           </el-button>
           <span class="xc-muted" style="font-size: 12px">
-            发送前会二次确认，并且按接口契约以 <span class="xc-mono">dry_run: false</span> 提交。
+            预览与发送都调用 bot 的 <span class="xc-mono">/api/digest/*</span>；发送前会二次确认，
+            并以 <span class="xc-mono">dry_run: false</span> 提交。
           </span>
         </div>
       </el-card>
 
-      <!-- 群列表 -->
+      <!-- 群列表：完全来自 bot status.groups -->
       <div class="xc-section-title">
         <span>订阅的群</span>
         <span class="xc-count">{{ groups.length }} 个</span>
-        <span v-if="config && config.sender_whitelist_mode" class="xc-count">
-          · 发送者白名单模式：{{ config.sender_whitelist_mode }}
+        <span v-if="whitelist.sender_mode" class="xc-count">
+          · 发送者白名单模式：{{ whitelist.sender_mode }}
         </span>
       </div>
       <el-table :data="groups" size="small" border stripe style="width: 100%">
-        <el-table-column prop="group_name" label="群名" min-width="180">
+        <el-table-column label="群名" min-width="180">
           <template #default="{ row }">
             <span>{{ row.group_name || '—' }}</span>
             <span class="xc-muted xc-mono" style="margin-left: 6px">{{ row.group_id }}</span>
@@ -290,17 +451,17 @@
         </el-table-column>
         <el-table-column label="在白名单" width="110" align="center">
           <template #default="{ row }">
-            <el-tag :type="row.in_whitelist ? 'success' : 'info'" size="small" effect="plain">
-              {{ row.in_whitelist ? '是' : '否' }}
+            <el-tag :type="inWhitelist(row) ? 'success' : 'info'" size="small" effect="plain">
+              {{ inWhitelist(row) ? '是' : '否' }}
             </el-tag>
           </template>
         </el-table-column>
         <el-table-column label="最后消息时间" min-width="180">
           <template #default="{ row }">
-            <template v-if="row.last_msg_ts">
-              {{ formatDateTime(row.last_msg_ts) }}
+            <template v-if="lastMsgTs(row)">
+              {{ formatDateTime(lastMsgTs(row)) }}
               <div class="xc-muted" style="font-size: 11px">
-                {{ timeAgoShort(row.last_msg_ts, now) }}
+                {{ timeAgoShort(lastMsgTs(row), now) }}
               </div>
             </template>
             <span v-else class="xc-muted">从未收到消息</span>
@@ -308,9 +469,9 @@
         </el-table-column>
         <el-table-column label="静默小时数" width="140" align="center">
           <template #default="{ row }">
-            <span :class="{ 'xc-warn-text': isSilent(row) }">
-              {{ formatHours(row.silent_hours) }}
-              <template v-if="isSilent(row)">
+            <span :class="{ 'xc-warn-text': isSilentGroup(row) }">
+              {{ formatSilentHours(row) }}
+              <template v-if="isSilentGroup(row)">
                 <el-tag type="warning" size="small" effect="plain" style="margin-left: 4px">
                   可能掉线
                 </el-tag>
@@ -327,7 +488,9 @@
           </template>
         </el-table-column>
         <template #empty>
-          <span class="xc-muted">没有群数据（后端可能未连接）</span>
+          <span class="xc-muted">
+            {{ store.error ? 'bot 未运行或不可达，取不到群列表' : 'bot 还没有收到任何群消息' }}
+          </span>
         </template>
       </el-table>
 
@@ -339,7 +502,7 @@
       <template v-if="gapAlerts.length">
         <el-alert
           v-for="gap in gapAlerts"
-          :key="gap.id || `${gap.group_id}-${gap.from_ts}`"
+          :key="gapKey(gap)"
           type="warning"
           :closable="false"
           show-icon
@@ -350,9 +513,7 @@
         >
           <div style="font-size: 12.5px">
             空档：{{ formatDateTime(gap.from_ts) }} → {{ formatDateTime(gap.to_ts) }}
-            <span class="xc-muted">
-              · 记录于 {{ formatDateTime(gap.created_at) }}
-            </span>
+            <span class="xc-muted"> · 记录于 {{ formatDateTime(gap.created_at) }}</span>
           </div>
           <div class="xc-muted" style="font-size: 12px; margin-top: 2px">
             这段空档通常是连接器掉线而不是群里没人说话，请检查 OneBot 是否还在运行。
@@ -360,51 +521,6 @@
         </el-alert>
       </template>
       <el-empty v-else description="没有缺口告警，所有群的消息都是连续的" :image-size="70" />
-
-      <!-- 白名单等元配置 -->
-      <div class="xc-section-title"><span>配置快照</span></div>
-      <el-card shadow="never">
-        <el-descriptions :column="1" size="small" border>
-          <el-descriptions-item label="群白名单">
-            <template v-if="groupWhitelist.length">
-              <el-tag
-                v-for="g in groupWhitelist"
-                :key="g.group_id"
-                size="small"
-                effect="plain"
-                style="margin: 2px 4px 2px 0"
-              >
-                {{ g.name || g.group_id }}
-                <span class="xc-mono xc-muted">({{ g.group_id }})</span>
-              </el-tag>
-            </template>
-            <span v-else class="xc-muted">未配置</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="发送者白名单">
-            <template v-if="senderWhitelist.length">
-              <el-tag
-                v-for="s in senderWhitelist"
-                :key="s.sender_id"
-                size="small"
-                effect="plain"
-                style="margin: 2px 4px 2px 0"
-              >
-                {{ s.name || s.sender_id }}
-              </el-tag>
-            </template>
-            <span v-else class="xc-muted">未配置</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="digest 时间">
-            {{ (config && config.digest_time) || '—' }}
-          </el-descriptions-item>
-          <el-descriptions-item label="服务器时间">
-            {{ formatDateTime(store.health.server_time) }}
-          </el-descriptions-item>
-        </el-descriptions>
-        <div v-if="!config" class="xc-muted" style="margin-top: 8px; font-size: 12px">
-          /api/config/meta 未取到（后端可能未连接）。
-        </div>
-      </el-card>
     </div>
 
     <!-- digest 预览弹窗 -->
@@ -428,12 +544,29 @@ import { Promotion, View } from '@element-plus/icons-vue'
 
 import AppHeader from '../components/AppHeader.vue'
 import { useHealthStore } from '../stores/health'
-import { useNotificationsStore } from '../stores/notifications'
 import { formatDateTime, formatDuration, timeAgoShort, toMillis } from '../utils/time'
+import {
+  backendReachability,
+  digestView,
+  formatSilentHours,
+  groupKey,
+  groupLabel,
+  isSilentGroup,
+  pipelineView,
+  whitelistGroupIds
+} from '../utils/healthStatus'
 
+/**
+ * 系统状态页。
+ *
+ * 数据来源（契约第 9 节）：
+ *   全部卡片 → bot `/api/status`（经 vite `/bot` 代理）
+ *   后端可达性 → 本页自己探一次后端 `/api/health`
+ * 盲区不再来自后端 `/api/notifications` 的 blindspots 字段（该字段已删除），
+ * 改从 bot status.blindspots + status.gap_alerts 取。
+ * 白名单不再来自后端 `/api/config/meta`（接口已下线），改从 bot status.whitelist 取。
+ */
 const store = useHealthStore()
-/** 盲区数据挂在列表接口的 blindspots 字段上（接口契约不变），所以也要用通知 store */
-const notificationsStore = useNotificationsStore()
 const router = useRouter()
 
 const now = ref(Date.now())
@@ -441,47 +574,59 @@ let tickTimer = null
 
 const loading = computed(() => store.loading)
 const lastLoadedAt = computed(() => store.lastLoadedAt)
-const onebot = computed(() => store.health.onebot || {})
-const pipeline = computed(() => store.health.pipeline || {})
-const llm = computed(() => store.health.llm || {})
-const groups = computed(() => store.health.groups || [])
-const gapAlerts = computed(() => store.health.gap_alerts || [])
-const config = computed(() => store.config)
 
-/* ---------------- 盲区（原主页 BlindSpotPanel 的内容） ---------------- */
-const blindspots = computed(() => notificationsStore.blindspots || {})
-const unparsedCount = computed(() => Number(blindspots.value.unparsed_count) || 0)
-const conflictCount = computed(() => Number(blindspots.value.conflict_count) || 0)
-const lowConfidenceCount = computed(() => Number(blindspots.value.low_confidence_count) || 0)
-const degradedToday = computed(() => !!blindspots.value.degraded_today)
-const blindspotTotal = computed(
-  () =>
-    unparsedCount.value +
-    conflictCount.value +
-    lowConfidenceCount.value +
-    gapAlerts.value.length +
-    (degradedToday.value ? 1 : 0)
-)
+/* ---------------- bot status 各区块 ---------------- */
+const onebot = computed(() => store.status.onebot || {})
+const llm = computed(() => store.status.llm || {})
+const groups = computed(() => store.status.groups || [])
+const gapAlerts = computed(() => store.status.gap_alerts || [])
+const whitelist = computed(() => store.status.whitelist || { groups: [], senders: [] })
+const digestInfo = computed(() => digestView(store.status.digest))
+const pipeline = computed(() => pipelineView(store.status.pipeline))
+const counts = computed(() => store.blindspotCounts)
+const blindspotTotal = computed(() => counts.value.total)
+const blindspotWindowDays = computed(() => Number(store.status.blindspots.window_days) || 0)
 
-const groupWhitelist = computed(() =>
-  config.value && Array.isArray(config.value.group_whitelist) ? config.value.group_whitelist : []
-)
-const senderWhitelist = computed(() =>
-  config.value && Array.isArray(config.value.sender_whitelist)
-    ? config.value.sender_whitelist
-    : []
-)
+/* ---------------- 后端可达性 ---------------- */
+const backendCard = computed(() => backendReachability(store.status, store.backendProbe))
+const backendCounts = computed(() => store.backendProbe.counts || null)
+/** 可达=绿、不可达=红（醒目）、还没探=灰 */
+const backendTag = computed(() => {
+  if (backendCard.value.level === 'warning') return { type: 'danger', effect: 'dark' }
+  if (backendCard.value.level === 'ok') return { type: 'success', effect: 'plain' }
+  return { type: 'info', effect: 'plain' }
+})
 
-/** 静默超过 2 小时视为可能掉线（对齐设计文档 R9） */
-function isSilent(row) {
-  const h = Number(row && row.silent_hours)
-  return Number.isFinite(h) && h > 2
+/* ---------------- 群列表辅助 ---------------- */
+const whitelistIds = computed(() => new Set(whitelistGroupIds(whitelist.value)))
+
+function inWhitelist(row) {
+  // bot 已经算好 in_whitelist；字段缺失时用 status.whitelist 自己兜一次
+  if (row && typeof row.in_whitelist === 'boolean') return row.in_whitelist
+  if (row && row.group_id !== undefined && row.group_id !== null) {
+    return whitelistIds.value.has(String(row.group_id))
+  }
+  return false
 }
 
-function formatHours(h) {
-  const n = Number(h)
-  if (!Number.isFinite(n)) return '—'
-  return `${n.toFixed(1)} 小时`
+/** 契约里 last_msg_ts 与 last_msg_at 是同一个值的两个名字，任取其一 */
+function lastMsgTs(row) {
+  if (!row) return null
+  return row.last_msg_ts || row.last_msg_at || null
+}
+
+function gapKey(gap) {
+  if (!gap) return 'gap'
+  if (gap.id) return String(gap.id)
+  return `${gap.group_id || 'unknown'}-${gap.from_ts || 0}`
+}
+
+function senderKey(sender, idx) {
+  const s = sender || {}
+  if (s.sender_id !== undefined && s.sender_id !== null && s.sender_id !== '') {
+    return String(s.sender_id)
+  }
+  return `sender-${idx}`
 }
 
 function formatNumber(n) {
@@ -490,10 +635,17 @@ function formatNumber(n) {
   return v.toLocaleString('zh-CN')
 }
 
-async function load() {
+/* ---------------- 动作 ---------------- */
+
+/**
+ * @param {boolean} force true = 忽略 30s 保鲜期强制刷新（手动刷新/重试走这条）
+ */
+async function load(force = false) {
   now.value = Date.now()
-  // 通知列表一起拉：盲区数据由它的 blindspots 字段提供（接口契约不变）
-  await Promise.all([store.load(), store.loadConfig(), notificationsStore.load()])
+  // force=false 时 store 会复用 30 秒内的 status，避免每次进页面都重打 bot
+  await store.load({ force })
+  // 手动刷新时把错误直接弹出来，避免用户以为刷新成功了
+  if (force && store.error) ElMessage.error(store.error)
 }
 
 async function previewDigest() {
@@ -528,7 +680,7 @@ async function sendToQQ() {
   if (r.ok && r.data && r.data.sent) {
     ElMessage.success('已发送')
   } else if (r.ok && r.data && r.data.sent === false) {
-    ElMessage.warning(`后端未发送：${(r.data && r.data.error) || '未知原因'}`)
+    ElMessage.warning(`bot 未发送：${(r.data && r.data.error) || '未知原因'}`)
   } else {
     ElMessage.error(r.message || '发送失败')
   }
@@ -540,7 +692,7 @@ function searchGroup(row) {
 }
 
 onMounted(() => {
-  load()
+  load(false)
   tickTimer = setInterval(() => {
     now.value = Date.now()
   }, 30 * 1000)
@@ -568,6 +720,12 @@ onBeforeUnmount(() => {
 
 .xc-warn-text {
   color: var(--xc-warning);
+  font-weight: 600;
+}
+
+/* 后端不可达这类「必须立刻看见」的信号 */
+.xc-danger-text {
+  color: var(--xc-due-overdue);
   font-weight: 600;
 }
 

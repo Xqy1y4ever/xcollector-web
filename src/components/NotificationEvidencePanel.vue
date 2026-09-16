@@ -73,14 +73,16 @@
       </el-descriptions-item>
     </el-descriptions>
 
-    <!-- 附件 -->
+    <!-- 附件：契约里 attachments[] = {id, type, name, size, url}
+         url 形如 /api/attachments/att_xxx（相对路径，已由 vite 的 /api 代理转发到后端），直接用。
+         旧的 local_path 字段已废弃，不再引用。 -->
     <template v-if="attachments.length">
       <div class="xc-field-label">附件（{{ attachments.length }}）</div>
       <div class="xc-attach">
-        <div v-for="(att, idx) in attachments" :key="idx" class="xc-attach__item">
-          <template v-if="att.type === 'image' && att.url">
+        <div v-for="(att, idx) in attachments" :key="att.id || idx" class="xc-attach__item">
+          <template v-if="att.type === 'image' && attUrl(att)">
             <el-image
-              :src="att.url"
+              :src="attUrl(att)"
               :preview-src-list="imageUrls"
               :initial-index="imageIndex(att)"
               fit="cover"
@@ -90,8 +92,8 @@
           </template>
           <template v-else>
             <a
-              v-if="att.url"
-              :href="att.url"
+              v-if="attUrl(att)"
+              :href="attUrl(att)"
               target="_blank"
               rel="noopener noreferrer"
               class="xc-mono"
@@ -100,11 +102,8 @@
             </a>
             <span v-else class="xc-muted xc-mono">无下载链接</span>
           </template>
-          <div class="xc-attach__caption" :title="att.local_path || att.url">
-            {{ att.type || 'file' }}<template v-if="att.local_path"> · 本地已存</template>
-          </div>
-          <div v-if="att.extracted_text" class="xc-muted" style="font-size: 11px">
-            OCR：{{ att.extracted_text }}
+          <div class="xc-attach__caption" :title="attTitle(att)">
+            {{ att.type || 'file' }}<template v-if="att.name"> · {{ att.name }}</template>
           </div>
         </div>
       </div>
@@ -127,6 +126,7 @@
 import { computed } from 'vue'
 import { Files, Link } from '@element-plus/icons-vue'
 
+import { attachmentUrl } from '../api/client'
 import { splitByEvidence } from '../utils/evidence'
 import { formatDateTime } from '../utils/time'
 
@@ -148,12 +148,26 @@ const attachments = computed(() =>
     : []
 )
 
+/** 附件地址：契约第 9 节，直接用后端的相对路径 `/api/attachments/att_xxx` */
+function attUrl(att) {
+  return attachmentUrl(att)
+}
+
+function attTitle(att) {
+  const parts = []
+  if (att && att.name) parts.push(att.name)
+  if (att && att.type) parts.push(`类型 ${att.type}`)
+  if (att && att.size) parts.push(`${att.size} 字节`)
+  const url = attUrl(att)
+  return parts.length ? `${parts.join(' · ')}${url ? ` · ${url}` : ''}` : url || '附件'
+}
+
 const imageUrls = computed(() =>
-  attachments.value.filter((a) => a.type === 'image' && a.url).map((a) => a.url)
+  attachments.value.filter((a) => a && a.type === 'image' && attUrl(a)).map((a) => attUrl(a))
 )
 
 function imageIndex(att) {
-  const idx = imageUrls.value.indexOf(att.url)
+  const idx = imageUrls.value.indexOf(attUrl(att))
   return idx === -1 ? 0 : idx
 }
 

@@ -187,7 +187,9 @@ const emptyDescription = computed(() => {
 })
 
 async function refreshAll() {
-  await Promise.all([store.load(), healthStore.load()])
+  // 通知列表走后端 /api/notifications；顶栏的状态点与盲区角标走 bot /api/status。
+  // 后端探针只在系统状态页跑（probeBackend:false），通知台不需要它。
+  await Promise.all([store.load(), healthStore.load({ probeBackend: false })])
   now.value = Date.now()
 }
 
@@ -251,7 +253,9 @@ onMounted(() => {
     if (!autoRefresh.value) return
     // 增量刷新：只取 updated_at > 上次 server_time 的条目
     store.load({ incremental: true, silent: true })
-    healthStore.load()
+    // 顶栏的状态点 / 盲区角标保持在 30 秒保鲜期之外时自动更新，
+    // 不重探后端（后端可达性只在系统状态页展示）
+    healthStore.refreshStatusForBadge()
     now.value = Date.now()
   }, 60 * 1000)
 })

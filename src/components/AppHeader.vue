@@ -24,8 +24,8 @@
         <span class="xc-header__dot-wrap">
           <span class="xc-status-dot" :class="`xc-status-dot--${connectionState}`" />
           <!-- 盲区角标：系统今天漏了东西也要在主页看得见 -->
-          <span v-if="blindspotWarningCount > 0" class="xc-header__badge">
-            {{ blindspotWarningCount > 9 ? '9+' : blindspotWarningCount }}
+          <span v-if="blindspotBadgeCount > 0" class="xc-header__badge">
+            {{ blindspotBadgeCount > 9 ? '9+' : blindspotBadgeCount }}
           </span>
         </span>
         <span class="xc-header__sync">
@@ -45,12 +45,11 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { Bell, Refresh } from '@element-plus/icons-vue'
 
 import { useHealthStore } from '../stores/health'
-import { useNotificationsStore } from '../stores/notifications'
 import { timeAgoShort } from '../utils/time'
 
 const props = defineProps({
@@ -64,7 +63,6 @@ const emit = defineEmits(['refresh'])
 
 const router = useRouter()
 const healthStore = useHealthStore()
-const notificationsStore = useNotificationsStore()
 
 /** 每秒 tick 一次，让「10 秒前」自己走字 */
 const tick = ref(Date.now())
@@ -85,20 +83,20 @@ const connectionState = computed(() => healthStore.connectionState)
 
 /**
  * 主页顶栏只用一个状态点 + 一个橙色角标回答「OneBot 活着吗 / 系统今天瞎了吗」。
- * 数字口径来自列表接口返回的 blindspots（契约不变）。
+ *
+ * 角标数字来自 **bot** 的 `/api/status`（`blindspots` + `gap_alerts`）——
+ * 后端的 `/api/notifications` 响应已经不再返回 `blindspots` 字段（契约第 8 节）。
+ * 代价是通知台会多一次 bot 请求，所以做了 30 秒保鲜期：status 还新鲜就不重复打，
+ * 且角标刷新时**不**重探后端（`refreshStatusForBadge()`）。
+ * 保留角标的理由：OneBot 连着但解析全挂时，光看状态点是绿的，
+ * 「今天系统瞎了」必须在主页可见，这是这个页面存在的意义。
  */
-const blindspotWarningCount = computed(() => {
-  const b = notificationsStore.blindspots || {}
-  const unparsed = Number(b.unparsed_count) || 0
-  const conflicts = Number(b.conflict_count) || 0
-  const gaps = Array.isArray(b.gap_alerts) ? b.gap_alerts.length : 0
-  return unparsed + conflicts + gaps
-})
+const blindspotBadgeCount = computed(() => healthStore.blindspotBadgeCount)
 
 const statusTitle = computed(() => {
   const base = healthStore.connectionText || '未知'
-  if (blindspotWarningCount.value > 0) {
-    return `${base} · 今日有 ${blindspotWarningCount.value} 项盲区，点击查看系统状态`
+  if (blindspotBadgeCount.value > 0) {
+    return `${base} · 今日有 ${blindspotBadgeCount.value} 项盲区，点击查看系统状态`
   }
   return `${base} · 点击查看系统状态`
 })
@@ -112,6 +110,18 @@ const syncText = computed(() => {
 function goHealth() {
   router.push('/health')
 }
+
+/**
+ * 顶栏在通知台也要显示 OneBot 状态与盲区角标，所以进页面时按需补一次 bot status。
+ * store 内部有保鲜期与静默失败，这里 fire-and-forget 即可（页面主数据不依赖它）。
+ */
+watch(
+  () => router.currentRoute.value.fullPath,
+  () => {
+    healthStore.refreshStatusForBadge()
+  },
+  { immediate: true }
+)
 </script>
 
 <style scoped>
