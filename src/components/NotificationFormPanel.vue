@@ -12,6 +12,12 @@
     />
 
     <div class="xc-field-label">
+      地点（location）
+      <span class="xc-muted">· 如「教三201」，没有地点就留空（留空 = 清除）</span>
+    </div>
+    <el-input v-model="form.location" placeholder="通知里的地点，如 教三201 / 学工办" clearable />
+
+    <div class="xc-field-label">
       截止时间（due_at）
       <span class="xc-muted">· 结构化时间，用于排序与日历</span>
     </div>
@@ -44,6 +50,7 @@
       <el-option label="进行中 active" value="active" />
       <el-option label="已过期 expired" value="expired" />
       <el-option label="已归档 archived" value="archived" />
+      <el-option label="已完成 done" value="done" />
     </el-select>
 
     <div class="xc-field-label">置信度与标记</div>
@@ -73,12 +80,22 @@
       class="xc-muted"
       style="margin-top: 8px; font-size: 12px"
     >
-      没有待保存的改动。改动会分别以 field=title / summary / due_at / due_text / status 提交。
+      没有待保存的改动。改动会分别以 field=title / summary / location / due_at / due_text / status
+      提交。
     </div>
 
     <el-divider />
     <div class="xc-field-label">快捷操作</div>
     <div style="display: flex; gap: 8px; flex-wrap: wrap">
+      <el-button
+        size="small"
+        type="success"
+        plain
+        :disabled="notification.status === 'done'"
+        @click="emit('mark-done')"
+      >
+        标记完成
+      </el-button>
       <el-button size="small" @click="emit('toggle-read')">
         {{ notification.read ? '标为未读' : '标为已读' }}
       </el-button>
@@ -114,7 +131,7 @@ const props = defineProps({
   isMobile: { type: Boolean, default: false }
 })
 
-const emit = defineEmits(['save', 'reset', 'toggle-read', 'archive'])
+const emit = defineEmits(['save', 'reset', 'toggle-read', 'archive', 'mark-done'])
 
 const confidenceTagType = computed(() => {
   switch (confidenceLevel(props.notification && props.notification.due_confidence)) {

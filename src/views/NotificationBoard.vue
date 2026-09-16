@@ -77,19 +77,36 @@
         <template v-else>
           <div class="xc-list">
             <template v-for="group in groups" :key="group.key">
-              <div class="xc-section-title">
+              <!-- 分组标题可点击折叠/展开；「已完成」默认收起（见 collapsedGroups），但条目数照常显示 -->
+              <div
+                class="xc-section-title xc-section-title--toggle"
+                role="button"
+                tabindex="0"
+                :title="`点击${isCollapsed(group.key) ? '展开' : '收起'}「${group.label}」`"
+                @click="toggleGroup(group.key)"
+                @keyup.enter="toggleGroup(group.key)"
+              >
+                <el-icon class="xc-section-title__caret">
+                  <ArrowDown v-if="!isCollapsed(group.key)" />
+                  <ArrowRight v-else />
+                </el-icon>
                 <span>{{ group.label }}</span>
                 <span class="xc-count">{{ group.items.length }} 条</span>
+                <span v-if="isCollapsed(group.key)" class="xc-section-title__hint">
+                  · 已收起，点击展开
+                </span>
               </div>
-              <NotificationCard
-                v-for="item in group.items"
-                :key="item.id"
-                :notification="item"
-                :now="now"
-                @open="openDetail"
-                @toggle-read="onToggleRead"
-                @archive="onArchive"
-              />
+              <template v-if="!isCollapsed(group.key)">
+                <NotificationCard
+                  v-for="item in group.items"
+                  :key="item.id"
+                  :notification="item"
+                  :now="now"
+                  @open="openDetail"
+                  @toggle-read="onToggleRead"
+                  @archive="onArchive"
+                />
+              </template>
             </template>
           </div>
         </template>
@@ -112,7 +129,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowRight, Search } from '@element-plus/icons-vue'
 
 import AppHeader from '../components/AppHeader.vue'
 import NotificationCard from '../components/NotificationCard.vue'
@@ -142,6 +159,22 @@ const totalCount = computed(() => store.notifications.length)
 const lastSyncedAt = computed(() => store.lastSyncedAt)
 
 const groups = computed(() => groupNotifications(store.notifications, now.value))
+
+/**
+ * 分组的折叠状态。
+ * 默认只把「已完成」收起来：它往往条数最多，且不是当前要盯的东西，
+ * 但条目数仍然显示在标题上，需要回看时点标题展开即可。
+ * 其余分组默认展开，保持改造前的观感。
+ */
+const collapsedGroups = ref({ done: true })
+
+function isCollapsed(key) {
+  return !!collapsedGroups.value[key]
+}
+
+function toggleGroup(key) {
+  collapsedGroups.value[key] = !collapsedGroups.value[key]
+}
 
 const emptyDescription = computed(() => {
   if (store.offline || store.error) {

@@ -360,17 +360,19 @@ export function buildDueDisplay(notification, now = Date.now()) {
 }
 
 /**
- * 分组：今天 / 本周 / 更晚 / 无确定时间 / 已过期
+ * 分组：今天 / 本周 / 更晚 / 无确定时间 / 已过期 / 已完成
  * 排序：due_at 升序，null 排最后。
+ * 「已完成」（status === 'done'）永远排在所有分组的最末尾。
  */
-export const DUE_GROUP_ORDER = ['overdue', 'today', 'thisweek', 'later', 'nodate']
+export const DUE_GROUP_ORDER = ['overdue', 'today', 'thisweek', 'later', 'nodate', 'done']
 
 export const DUE_GROUP_LABELS = {
   overdue: '已过期',
   today: '今天',
   thisweek: '几天内',
   later: '更晚',
-  nodate: '无确定时间'
+  nodate: '无确定时间',
+  done: '已完成'
 }
 
 /** 判断一条通知归属哪个分组 */
@@ -378,6 +380,11 @@ export function groupKeyOf(notification, now = Date.now()) {
   const n = notification || {}
   const dueMs = toMillis(n.due_at)
   const status = n.status || 'active'
+
+  // 状态优先级高于时间分组：done（用户在 QQ 里用 /done 标记完成）无论
+  // due_at 是否已过、是否为 null，都只归「已完成」。
+  // 否则完成过的任务会因为时间过期掉回「已过期」，看起来像没做完。
+  if (status === 'done') return 'done'
 
   if (dueMs === null) return 'nodate'
   if (status === 'expired') return 'overdue'
@@ -415,7 +422,8 @@ export function groupNotifications(list, now = Date.now()) {
     today: [],
     thisweek: [],
     later: [],
-    nodate: []
+    nodate: [],
+    done: []
   }
   const source = Array.isArray(list) ? list : []
   for (const item of source) {
@@ -439,6 +447,8 @@ export function statusLabel(status) {
       return '已过期'
     case 'archived':
       return '已归档'
+    case 'done':
+      return '已完成'
     default:
       return status || '未知状态'
   }

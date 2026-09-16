@@ -29,6 +29,9 @@ function normalizeNotification(raw) {
     sender_name: raw.sender_name || '未知发布者',
     title: raw.title || '（无标题）',
     summary: raw.summary || '',
+    // 地点：后端可能给 null（大多数闲聊/无地点的通知），统一保留 null 语义，
+    // 展示与表单各自决定「空」怎么呈现（卡片第三行退化，表单填空串）
+    location: raw.location === undefined || raw.location === null ? null : String(raw.location),
     due_at: raw.due_at === undefined ? null : raw.due_at,
     due_text: raw.due_text || '',
     due_confidence:

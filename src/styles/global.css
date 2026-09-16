@@ -84,6 +84,35 @@ body {
   color: var(--xc-text-secondary);
 }
 
+/* 可折叠的分组标题（如「已完成」默认收起）：整行可点，箭头指示展开状态 */
+.xc-section-title--toggle {
+  cursor: pointer;
+  user-select: none;
+}
+
+.xc-section-title--toggle:hover {
+  color: var(--xc-primary);
+}
+
+.xc-section-title--toggle:hover .xc-count {
+  color: var(--xc-primary);
+}
+
+.xc-section-title__caret {
+  font-size: 12px;
+  color: var(--xc-text-secondary);
+}
+
+.xc-section-title--toggle:hover .xc-section-title__caret {
+  color: var(--xc-primary);
+}
+
+.xc-section-title__hint {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--xc-text-secondary);
+}
+
 .xc-muted {
   color: var(--xc-text-secondary);
 }
@@ -226,6 +255,33 @@ body {
 .xc-due--later .xc-due__date,
 .xc-due--later .xc-due__time {
   color: var(--xc-due-later);
+}
+
+/* ============ 已完成（status=done）弱化 ============
+ * 刻意不隐藏：用户需要能回看自己完成了什么。
+ * 这里只做「视觉覆盖」，不改 dueLevel() —— 卡片左侧仍然按规则算出真实档位，
+ * 只是 done 条目统一压成灰色，避免「已完成」的卡片还在用红色/橙色喊紧急。
+ * 必须放在所有 .xc-due--* 规则之后：同权重选择器靠源码顺序决胜。
+ */
+.xc-card--done {
+  opacity: 0.55;
+}
+
+.xc-card--done .xc-card__title {
+  text-decoration: line-through;
+}
+
+.xc-card--done .xc-due {
+  border-left-color: var(--xc-due-none);
+}
+
+.xc-card--done .xc-due__date,
+.xc-card--done .xc-due__time {
+  color: var(--xc-due-none);
+}
+
+.xc-card--done .xc-due__time {
+  text-decoration: none;
 }
 
 /* --- 右侧三行正文 --- */

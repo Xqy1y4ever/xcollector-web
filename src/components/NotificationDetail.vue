@@ -81,6 +81,7 @@
               @reset="resetForm"
               @toggle-read="toggleRead"
               @archive="markNotANotification"
+              @mark-done="markDone"
             />
           </div>
 
@@ -110,6 +111,7 @@
               @reset="resetForm"
               @toggle-read="toggleRead"
               @archive="markNotANotification"
+              @mark-done="markDone"
             />
           </div>
 
@@ -207,6 +209,7 @@ const candidates = computed(() =>
 const form = reactive({
   title: '',
   summary: '',
+  location: '',
   dueAt: null,
   dueText: '',
   status: 'active'
@@ -228,6 +231,7 @@ function syncForm() {
   if (!n) {
     form.title = ''
     form.summary = ''
+    form.location = ''
     form.dueAt = null
     form.dueText = ''
     form.status = 'active'
@@ -235,6 +239,8 @@ function syncForm() {
   }
   form.title = n.title || ''
   form.summary = n.summary || ''
+  // location 与 title/summary 同规格：从 notification.location 读，null → 空串
+  form.location = n.location || ''
   form.dueAt = msToPickerValue(n.due_at)
   form.dueText = n.due_text || ''
   form.status = n.status || 'active'
@@ -277,6 +283,7 @@ const hasChanges = computed(() => {
   if (!n) return false
   if (form.title !== (n.title || '')) return true
   if (form.summary !== (n.summary || '')) return true
+  if (form.location !== (n.location || '')) return true
   if (form.dueText !== (n.due_text || '')) return true
   if (form.status !== (n.status || 'active')) return true
   if (originalDueMs.value !== formDueMs.value) return true
@@ -313,6 +320,11 @@ async function save() {
   if (form.summary !== (n.summary || '')) {
     const r = await submitField('summary', form.summary)
     if (!r.ok) failures.push(`摘要：${r.message}`)
+  }
+  // location 与 title/summary 同规格：空串原样提交（后端按「清除地点」处理）
+  if (form.location !== (n.location || '')) {
+    const r = await submitField('location', form.location)
+    if (!r.ok) failures.push(`地点：${r.message}`)
   }
   // due_at 传毫秒 int 或 null，绝不传字符串
   if (originalDueMs.value !== formDueMs.value) {
@@ -375,6 +387,25 @@ async function toggleRead() {
   if (!n) return
   const r = await store.toggleRead(n.id)
   if (!r.ok) ElMessage.error(r.message)
+}
+
+/**
+ * 「标记完成」：等价于用户在 QQ 里发 /done。
+ * 走的是同一条 corrections 通道（field=status, value=done），不做单独接口。
+ */
+async function markDone() {
+  const n = notification.value
+  if (!n) return
+  if ((n.status || 'active') === 'done') return
+  const r = await submitField('status', 'done')
+  if (r.ok) {
+    // 状态改了，编辑中的 status 与原始值必须对齐，否则 hasChanges 会一直为真
+    form.status = 'done'
+    dirty.value = false
+    ElMessage.success('已标记为「已完成」')
+  } else {
+    ElMessage.error(`标记失败：${r.message}`)
+  }
 }
 
 async function markNotANotification() {

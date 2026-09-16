@@ -1,7 +1,10 @@
 <template>
   <div
     class="xc-card"
-    :class="{ 'xc-card--archived': notification.status === 'archived' }"
+    :class="{
+      'xc-card--archived': notification.status === 'archived',
+      'xc-card--done': notification.status === 'done'
+    }"
     @click="emit('open', notification.id)"
   >
     <!-- 左侧固定宽度 DDL 列：3px 色条 + 上行日期 + 下行时间 -->
@@ -19,7 +22,7 @@
       <div v-else class="xc-due__time">{{ due.timeBottom }}</div>
     </div>
 
-    <!-- 右侧三行：标题 / 摘要 / 来源·位置 + 标签 -->
+    <!-- 右侧三行：标题 / 摘要 / 来源·地点·发布者 + 标签 -->
     <div class="xc-card__body">
       <div class="xc-card__row xc-card__row--title">
         <span
@@ -37,7 +40,7 @@
       </div>
 
       <div class="xc-card__row xc-card__row--meta">
-        <span class="xc-card__source" :title="sourceText">{{ sourceText }}</span>
+        <span class="xc-card__source" :title="metaText">{{ metaText }}</span>
         <div class="xc-card__tags">
           <span v-if="notification.conflict" class="xc-tag xc-tag--danger">DDL 冲突</span>
           <span v-if="notification.manually_edited" class="xc-tag xc-tag--success">已人工确认</span>
@@ -53,6 +56,7 @@
 import { computed } from 'vue'
 
 import { dueLevel, formatDate, formatTime, formatWeekday, toMillis } from '../utils/time'
+import { buildCardMetaText } from '../utils/notificationText'
 
 /**
  * 紧凑通知卡片。
@@ -111,13 +115,11 @@ const hasSummary = computed(() => {
   return typeof s === 'string' && s.trim() !== ''
 })
 
-/** 来源 = group_name（回退 group_id）；位置 = sender_name（回退 sender_id） */
-const sourceText = computed(() => {
-  const n = props.notification || {}
-  const group = n.group_name || n.group_id || '未知群'
-  const sender = n.sender_name || n.sender_id || '未知发布者'
-  return `${group} · ${sender}`
-})
+/**
+ * 第三行文案：群名 · 地点 · 发布者（没有 location 时退化为 群名 · 发布者）。
+ * 规则本体在 utils/notificationText.js，方便断言，也避免多处漂移。
+ */
+const metaText = computed(() => buildCardMetaText(props.notification))
 
 /** 低置信度只在「确实有结构化时间」时才提示；due_at 为 null 时上行已经写了「待确认」 */
 const isLowConfidence = computed(() => {
