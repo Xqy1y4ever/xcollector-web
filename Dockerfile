@@ -12,9 +12,14 @@ RUN npm ci
 
 COPY . .
 
-# 这两个 ARG 是给「不用 docker、直接 npm run build」的场景留的。
-# 在 Docker 部署下**不需要填**：nginx 会在代理时注入 Authorization 头，
-# token 因此不必进 bundle（比塞进前端安全得多）。
+# 这两个 ARG 是「预置令牌」的降级路径（不想用登录页时的开发/CI 场景）。
+#
+# Docker 部署下**保持留空**：认证由登录页承担，用户输入的 token 存在浏览器里，
+# nginx 在代理时**原样转发**浏览器带的 Authorization 头（见 nginx.conf.template），
+# 所以 token 不必进 bundle。
+#
+# ⚠️ 一旦填了，构建后 token 会**明文躺在 dist/assets/*.js 里** ——
+#    任何能打开页面的人都能读到。它不是安全边界。
 ARG VITE_API_TOKEN=""
 ARG VITE_BOT_API_TOKEN=""
 ENV VITE_API_TOKEN=${VITE_API_TOKEN} \
