@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "license": "MIT",
   "description": "Xcollector Web 前端 · QQ 官方通知 → 含 DDL 的任务条目控制台",
   "scripts": {
     "dev": "vite",
