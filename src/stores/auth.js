@@ -4,17 +4,24 @@ import { fetchBackendHealth, isServerError } from '../api/client'
 import { clearActiveTokens, setActiveTokens } from '../api/token'
 
 /**
- * 认证 store：整套系统只有**一个共享密钥**（后端的 `API_TOKEN`，契约约定）。
+ * 认证 store：**两个令牌，两个范围**（契约见 xcollector-backend/docs/api.md「通用约定」）。
  *
- * 后端所有 `/api` 都要求 `Authorization: Bearer <API_TOKEN>`。以前是 Docker 里的 nginx
+ *   网页令牌 WEB_API_TOKEN —— 用户在登录页输入的。后端与 bot 都认它，但它只能
+ *     **读取、提交人工修正、标记已读**；写接口一律 403。
+ *   管理令牌 API_TOKEN / BOT_API_TOKEN —— 只在服务器上，登录页「高级」里可选填。
+ *     填了这个浏览器就解锁「发送到 QQ」这类会真的动手的操作。
+ *
+ * 后端所有 `/api` 都要求 `Authorization: Bearer <令牌>`。以前是 Docker 里的 nginx
  * 无条件注入 token（任何能访问到 8080 端口的人都能进来），现在改成认证在前端做：
  * nginx 原样转发浏览器带的 `Authorization`，所以必须由用户在登录页输入 token。
  *
- * bot 在 `BOT_API_TOKEN` 为空时会回退用 `API_TOKEN` 校验，所以**同一个 token 同时用于
- * `/api` 和 `/bot`**；登录页给高级用户留了一个单独的 bot 令牌输入框，留空即与上面相同。
+ * 为什么读也用网页令牌、而不是让管理令牌顶替一切：管理令牌是**全权**的，
+ * 不该为了看个列表就把它留在浏览器里。所以即使「高级」里填了管理令牌，
+ * 读接口仍然走网页令牌（见 effectiveBotToken 与 token.js）。
  *
- * ⚠️ 这不是完整的鉴权：它是「一个共享密钥」，不是按用户的账号体系；
- * 所有登录的人权限完全一样。真正的边界仍然是不要把端口暴露到公网（见 README「认证」）。
+ * ⚠️ 这仍然不是按用户的账号体系：所有拿同一个网页令牌登录的人权限完全一样。
+ * 分级只解决"泄露网页令牌会不会导致数据被改"，不解决"谁看了什么"。
+ * 真正的边界仍然是不要把端口暴露到公网，并且上 HTTPS（见 README「认证」）。
  */
 
 /** 两种存储共用同一组 key，便于 `restore()` 两边都看一眼 */
@@ -110,7 +117,7 @@ export const useAuthStore = defineStore('auth', {
   getters: {
     /** 有 token 即视为已登录（本地态，不做在线校验） */
     isAuthenticated: (state) => !!state.token,
-    /** 实际发给 /bot 的令牌：botToken 为空时回退到 token（契约：只有一个共享密钥） */
+    /** 实际发给 /bot 的令牌：没填管理令牌时退回网页令牌（读接口两种都能用） */
     effectiveBotToken: (state) => state.botToken || state.token
   },
 

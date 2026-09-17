@@ -14,20 +14,26 @@ export const BACKEND_DOWN_MESSAGE = '后端未连接，请确认 FastAPI 已在 
 /** bot 未连接时的统一文案 */
 export const BOT_DOWN_MESSAGE = 'bot 未运行或不可达'
 
-/** 每个上游的文案包：一条「连不上」、一条「超时」、一条「未授权」 */
+/** 每个上游的文案包：连不上 / 超时 / 未授权（401） / 权限不足（403） */
 const PROFILES = {
   backend: {
     down: BACKEND_DOWN_MESSAGE,
     timeout: '后端响应超时，请确认服务是否卡住',
     unauthorized:
-      '未授权（401）：后端配置了 API_TOKEN，但这次请求没有带上正确的令牌。请到登录页重新输入后端的 API_TOKEN（令牌不匹配时后端会直接拒绝；若后端 API_TOKEN 留空则不校验，仅本机开发可这样）',
+      '未授权（401）：这次请求没带上正确的令牌。请到登录页重新输入网页令牌（WEB_API_TOKEN）。后端没配令牌时不校验，那是仅限本机开发的做法',
+    // 401 和 403 必须分开说：401 是"你谁啊"，403 是"我知道你是谁，但你没这个权限"。
+    // 混在一起会让用户以为令牌输了，反复重输也没用。
+    forbidden:
+      '权限不足（403）：这个操作只允许 bot 做。网页令牌只能读取、提交人工修正、标记已读 —— 入库、改机器字段、删除、上传附件都归 bot。这是刻意设计的：网页令牌必须交给登录页，所以不该能改库',
     label: '后端'
   },
   bot: {
     down: BOT_DOWN_MESSAGE,
     timeout: 'bot 响应超时，请确认服务是否卡住',
     unauthorized:
-      '未授权（401）：bot 配置了 API_TOKEN，但这次请求没有带上正确的令牌。契约约定整套系统只有一个共享密钥（bot 在 BOT_API_TOKEN 为空时回退用 API_TOKEN 校验），所以到登录页重新输入令牌即可；如果你在登录页「高级」里单独填了 bot 令牌，请确认它与 bot 侧一致',
+      '未授权（401）：这次请求没带上正确的令牌。bot 认两个令牌：网页令牌（看状态/预览摘要）和管理令牌（还能发消息）。请到登录页重新输入',
+    forbidden:
+      '权限不足（403）：网页令牌只能看状态和预览摘要，**不能发消息**。想现在就发，请在登录页「高级」里填管理令牌（BOT_API_TOKEN 或 API_TOKEN）；否则等 bot 按 DIGEST_TIME 自动发',
     label: 'bot'
   }
 }
@@ -66,8 +72,9 @@ export function humanizeError(error, service = 'backend') {
       }
     }
     const suffix = detail ? `：${detail}` : ''
-    // 401 必须给「怎么修」而不是「请求失败」：这是配置问题，用户自己能解决
-    if (status === 401 || status === 403) return `${p.unauthorized}${suffix}`
+    // 401 = 令牌不对（去重新登录）；403 = 令牌对但没这个权限（换操作方式，不是重输）
+    if (status === 401) return `${p.unauthorized}${suffix}`
+    if (status === 403) return `${p.forbidden}${suffix}`
     if (status === 404) return `${p.label}返回 404，接口可能尚未实现${suffix}`
     if (status >= 500) return `${p.label}错误（HTTP ${status}）${suffix}`
     return `请求失败（HTTP ${status}）${suffix}`

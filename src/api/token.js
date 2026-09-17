@@ -22,7 +22,7 @@
 /** store 没恢复过任何 token 时的兜底：构建期内联的预置令牌（开发 / CI 用），可为空串 */
 export const ENV_TOKEN = import.meta.env.VITE_API_TOKEN || ''
 
-/** bot 专用预置令牌；通常留空（契约：整套系统只有一个共享密钥，bot 会回退用 API_TOKEN） */
+/** 管理令牌的预置值（开发 / CI 用）；通常留空，它不该出现在构建产物里 */
 export const ENV_BOT_TOKEN = import.meta.env.VITE_BOT_API_TOKEN || ''
 
 /** 当前生效的后端令牌（`/api` 用） */
@@ -43,8 +43,8 @@ export function getActiveBotToken() {
 
 /**
  * 由 auth store 调用：写入当前生效的令牌。
- * @param {string} token 后端令牌，空串表示「没有」
- * @param {string} [botToken] bot 专用令牌，留空表示与 token 相同
+ * @param {string} token 网页令牌（后端与 bot 的读接口都用它），空串表示「没有」
+ * @param {string} [botToken] 可选的管理令牌；留空表示"这个浏览器只有网页权限"
  */
 export function setActiveTokens(token, botToken) {
   activeToken = token || ''

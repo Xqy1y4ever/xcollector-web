@@ -423,13 +423,21 @@
             <el-icon style="margin-right: 4px"><View /></el-icon>
             预览 digest
           </el-button>
-          <el-button type="primary" :loading="store.digestSending" @click="sendToQQ">
+          <!-- 只有显式填了管理令牌才出现：网页令牌发消息会被 bot 403 -->
+          <el-button
+            v-if="canSendDigest"
+            type="primary"
+            :loading="store.digestSending"
+            @click="sendToQQ"
+          >
             <el-icon style="margin-right: 4px"><Promotion /></el-icon>
             发送到 QQ
           </el-button>
           <span class="xc-muted" style="font-size: 12px">
-            预览与发送都调用 bot 的 <span class="xc-mono">/api/digest/*</span>；发送前会二次确认，
-            并以 <span class="xc-mono">dry_run: false</span> 提交。
+            预览走 bot 的 <span class="xc-mono">/api/digest/preview</span>（网页令牌即可）；
+            发送走 <span class="xc-mono">/api/digest/send</span>，**只认管理令牌** ——
+            因为它会真的往 QQ 发消息。想手动发就在登录页「高级」里填管理令牌，
+            否则等 bot 按 <span class="xc-mono">DIGEST_TIME</span> 自动发。
           </span>
         </div>
       </el-card>
@@ -543,6 +551,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Promotion, View } from '@element-plus/icons-vue'
 
 import AppHeader from '../components/AppHeader.vue'
+import { useAuthStore } from '../stores/auth'
 import { useHealthStore } from '../stores/health'
 import { formatDateTime, formatDuration, timeAgoShort, toMillis } from '../utils/time'
 import {
@@ -567,7 +576,19 @@ import {
  * 白名单不再来自后端 `/api/config/meta`（接口已下线），改从 bot status.whitelist 取。
  */
 const store = useHealthStore()
+const authStore = useAuthStore()
 const router = useRouter()
+
+/**
+ * 能不能「发送到 QQ」。
+ *
+ * 网页令牌**不允许**发消息（bot 那边会 403）：那个令牌必须交给登录页，而
+ * 「任何人拿到它就能以你的身份发 QQ 消息」比"能改数据库"更直接。
+ * 只有用户在登录页「高级」里显式填了管理令牌（BOT_API_TOKEN / API_TOKEN）
+ * 才显示这个按钮 —— 那时他自己就是管理员，这是有意的。
+ * 没填的人连按钮都看不到，不会点了才吃 403。
+ */
+const canSendDigest = computed(() => !!authStore.botToken)
 
 const now = ref(Date.now())
 let tickTimer = null

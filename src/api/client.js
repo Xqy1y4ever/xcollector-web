@@ -110,8 +110,7 @@ function handleUnauthorized(error) {
       ? window.location.pathname + window.location.search
       : '/') || '/'
   goToLogin(fullPath)
-  // 不改写文案：errors.js 的 humanizeError 会按 `error.response.status` 给出
-  // 「未授权（401）：…请到登录页重新输入后端的 API_TOKEN」那套中文指引（此处保留）。
+  // 不改写文案：errors.js 的 humanizeError 会按 `error.response.status` 给出对应中文指引
 }
 
 http.interceptors.request.use((config) => {
@@ -125,7 +124,10 @@ http.interceptors.response.use(
   (response) => response,
   (error) => {
     const status = error && error.response ? error.response.status : 0
-    if (status === 401 || status === 403) handleUnauthorized(error)
+    // **只有 401 才登出。** 403 是"令牌有效但没这个权限"（网页令牌碰上 bot 专属接口），
+    // 把它也当成登录过期，用户会被莫名其妙踢回登录页、重输一遍还是 403。
+    // 403 就让它往上抛，由 errors.js 给出"你没这个权限"的中文说明。
+    if (status === 401) handleUnauthorized(error)
     return Promise.reject(error)
   }
 )

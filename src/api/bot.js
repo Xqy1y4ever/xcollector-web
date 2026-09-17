@@ -14,9 +14,10 @@ import { getActiveBotToken } from './token'
  * http://127.0.0.1:8082（见 vite.config.js 的 XCOLLECTOR_BOT）。
  * 生产部署时如果 bot 与前端不同源，把 VITE_BOT_BASE 设为 bot 地址即可。
  *
- * 认证：跟后端一样用 `Authorization: Bearer <token>`。契约约定整套系统**只有一个共享密钥**——
- * bot 在 BOT_API_TOKEN 为空时会回退用 API_TOKEN 校验，所以这里默认就用用户在登录页输入的那一个；
- * 登录页的「高级」区允许单独覆盖一个 bot 令牌。
+ * 认证：跟后端一样用 `Authorization: Bearer <令牌>`。bot 认**两个**令牌：
+ *   - 网页令牌（WEB_API_TOKEN）→ 只能 GET /api/status 与 GET /api/digest/preview
+ *   - 管理令牌（BOT_API_TOKEN / API_TOKEN）→ 还能 POST /api/digest/send、/api/send/*
+ * 登录页默认只给网页令牌（够看状态页）；「高级」里填了管理令牌才会解锁发送。
  * 令牌来源是 `stores/auth.js` 写进 `src/api/token.js` 的模块级持有者（破环理由见该文件注释）。
  */
 const baseURL = import.meta.env.VITE_BOT_BASE || '/bot'

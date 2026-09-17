@@ -40,7 +40,7 @@
           <!-- 回车即提交：el-input 的 native form submit 会被 @submit.prevent 接住 -->
           <el-form-item prop="token" class="xc-login__item">
             <template #label>
-              <span class="xc-login__label">访问令牌</span>
+              <span class="xc-login__label">网页令牌</span>
             </template>
             <el-input
               v-model="form.token"
@@ -49,11 +49,13 @@
               show-password
               clearable
               autocomplete="current-password"
-              placeholder="后端 API_TOKEN"
+              placeholder="后端/ bot 的 WEB_API_TOKEN"
               :disabled="submitting"
             />
             <div class="xc-login__hint">
-              就是后端进程里配置的 <span class="xc-mono">API_TOKEN</span>
+              后端与 bot 共用的 <span class="xc-mono">WEB_API_TOKEN</span>。
+              它只能<strong>读取、提交人工修正、标记已读</strong> —— 改不了数据库、
+              也不能发 QQ 消息。
             </div>
           </el-form-item>
 
@@ -66,31 +68,31 @@
             </div>
           </el-form-item>
 
-          <!-- 高级：可选的 bot 令牌。契约只有一个共享密钥，所以默认留空即可 -->
+          <!-- 高级：管理员令牌。填了才解锁「发送到 QQ」这类会真的动手的操作 -->
           <el-form-item class="xc-login__item">
             <el-checkbox v-model="advanced" :disabled="submitting">
-              高级：单独指定 bot 令牌
+              高级：我是管理员，填管理令牌解锁写操作
             </el-checkbox>
           </el-form-item>
 
           <div v-if="advanced" class="xc-login__advanced">
             <el-form-item prop="botToken" class="xc-login__item">
               <template #label>
-                <span class="xc-login__label">bot 令牌（可选）</span>
+                <span class="xc-login__label">管理令牌（可选）</span>
               </template>
               <el-input
                 v-model="form.botToken"
                 type="password"
                 show-password
                 clearable
-                placeholder="留空则与上面相同"
+                placeholder="BOT_API_TOKEN 或 API_TOKEN"
                 :disabled="submitting"
               />
               <div class="xc-login__hint">
-                留空则与上面的访问令牌相同（契约约定整套系统只有一个共享密钥，bot 在
-                <span class="xc-mono">BOT_API_TOKEN</span> 为空时会回退用
-                <span class="xc-mono">API_TOKEN</span> 校验）。只有 bot 单独配了不同的
-                <span class="xc-mono">BOT_API_TOKEN</span> 时才需要填。
+                填 <span class="xc-mono">BOT_API_TOKEN</span>（bot 侧）或
+                <span class="xc-mono">API_TOKEN</span>（写入令牌）。
+                <strong>填了它，这个浏览器就有完整权限</strong>——包括以你的身份发 QQ 消息。
+                它<strong>不会</strong>替代上面的网页令牌：读接口仍然用网页令牌。
               </div>
             </el-form-item>
           </div>
@@ -109,13 +111,20 @@
 
         <div class="xc-login__footer">
           <p>
-            令牌是后端的 <span class="xc-mono">API_TOKEN</span>，登录后存在这台浏览器的
-            storage 里。<strong>任何能在这台浏览器上执行 JS 的东西都能读到它</strong>，
-            因此它只适合私有部署——
-            <strong>不要把端口暴露到公网</strong>。
+            令牌是<strong>网页令牌</strong> <span class="xc-mono">WEB_API_TOKEN</span>，
+            登录后存在这台浏览器的 storage 里。
+            <strong>任何能在这台浏览器上执行 JS 的东西都能读到它</strong>，
+            因此它只适合私有部署——<strong>不要把端口暴露到公网</strong>。
           </p>
           <p>
-            这套系统只有<strong>一个共享密钥</strong>：不是按用户的账号体系，所有登录的人权限完全一样。
+            它<strong>不能</strong>改数据库，也<strong>不能</strong>发 QQ 消息 ——
+            入库和「发送到 QQ」只认管理令牌（bot 侧叫
+            <span class="xc-mono">API_TOKEN</span>），那个只在服务器上。
+            所以就算这个令牌泄露，别人也只能看，改不了、发不了。
+          </p>
+          <p>
+            仍然<strong>不是按用户的账号体系</strong>：所有拿同一个网页令牌登录的人，
+            看到的东西和能做的事完全一样。
           </p>
         </div>
       </el-card>
