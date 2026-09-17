@@ -1,0 +1,17 @@
+# 纯文件镜像：把已构建好的 dist/ 打进一个空镜像
+#
+#   docker pull ghcr.io/<owner>/xcollector-web:latest
+#   docker create --name xcw ghcr.io/<owner>/xcollector-web:latest
+#   docker cp xcw:/dist/. ./dist
+#   docker rm xcw
+#
+# ⚠️ 这个镜像**不提供服务**，也不能 `docker run` —— 它是 FROM scratch，
+#    里面没有 shell、没有运行时、没有 nginx。它存在的唯一理由是：
+#    让不想在部署机上装 Node 的人也能 `docker pull` 到前端产物。
+#
+# 由 .github/workflows/dist.yml 在 `npm run build` 之后构建。
+
+FROM scratch
+
+# 只有这一个目录，就是 npm run build 的产物
+COPY dist /dist

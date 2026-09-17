@@ -25,6 +25,40 @@ npm run preview
 > 列表区会显示「后端未连接，请确认 FastAPI 已在 127.0.0.1:8000 运行」，
 > 顶栏的连接状态点是**红色**，并提供「重试」按钮。
 
+### 不想自己构建？直接拿 CI 的产物
+
+推到 GitHub 后，`.github/workflows/dist.yml` 会构建一次，然后以**两种形式**发布
+（部署机上因此**不需要装 Node**）：
+
+**方式一：Release 附件**
+
+```bash
+curl -L https://github.com/Xqy1y4ever/xcollector-web/releases/latest/download/dist.tar.gz \
+  | tar xz -C /var/www/xcollector
+# → /var/www/xcollector/dist/
+
+# 想校验完整性（可选）
+curl -L .../dist.tar.gz.sha256 -o dist.tar.gz.sha256 && sha256sum -c dist.tar.gz.sha256
+```
+
+**方式二：GHCR 纯文件镜像**
+
+```bash
+docker pull ghcr.io/xqy1y4ever/xcollector-web:latest
+docker create --name xcw ghcr.io/xqy1y4ever/xcollector-web:latest
+docker cp xcw:/dist/. ./dist
+docker rm xcw
+```
+
+> 这个镜像用 `FROM scratch`，里面**没有运行时、没有服务、没有 nginx**，
+> 只是个能被 `pull`、能被 `cp` 的文件袋 —— 所以**不能 `docker run`**。
+> 它存在的唯一理由是让已经在用 Docker 的人少装一个 Node。
+
+两种形式发的是同一份产物，选顺手的即可。
+
+**版本策略**：推 `main` 会滚动更新一个叫 `latest` 的预发布版本；
+推 `v1.2.3` 这样的 tag 会出一个正式 Release。
+
 ### 后端怎么配合
 
 开发时前端只请求同源的 `/api/*`，由 Vite dev 代理转发到后端，**因此不需要处理 CORS**。
