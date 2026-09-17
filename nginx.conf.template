@@ -1,0 +1,73 @@
+# 由官方 nginx 镜像的 entrypoint 用 envsubst 渲染成 /etc/nginx/conf.d/default.conf
+#
+# 只有环境里真实存在的变量会被替换 —— nginx 自己的 $host/$uri/$remote_addr 不受影响。
+# 但反过来：${API_TOKEN} 这类占位符如果环境里没定义，会**原样留下**，
+# nginx 会把它当成未知变量并在启动时报错。所以 compose 里必须始终定义它们
+# （哪怕是空字符串）。
+
+server {
+    listen 80;
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # 附件与消息体走内部网络，这里给个上限兜底
+    client_max_body_size 8m;
+
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css application/javascript application/json image/svg+xml;
+
+    # ---- 静态资源 ----
+    # 带 hash 的产物可以长期缓存
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+
+    # SPA：找不到文件就交给 index.html 路由
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # ---- 后端：通知数据 ----
+    # backend 是 compose 里的服务名。proxy_pass 结尾不带 /，所以 /api 前缀原样保留
+    # （后端的路由就是挂在 /api 下的）。
+    location /api/ {
+        proxy_pass http://backend:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # 关键：token 在这里注入，不进前端 bundle。
+        # 前端就算配了 VITE_API_TOKEN，也会被这行覆盖成服务端持有的那个。
+        proxy_set_header Authorization "Bearer ${API_TOKEN}";
+
+        # 附件可能是图片，别让中间层缓存它们
+        proxy_buffering off;
+        proxy_read_timeout 60s;
+    }
+
+    # ---- bot：系统状态、digest ----
+    # proxy_pass 结尾**带** /，会把 /bot/ 前缀摘掉：
+    # 前端请求 /bot/api/status -> bot 收到 /api/status
+    location /bot/ {
+        proxy_pass http://bot:8082/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # 契约说整套系统只有**一个**共享密钥：bot 在 BOT_API_TOKEN 为空时会回退
+        # 用 API_TOKEN 校验。所以这里必须发 API_TOKEN，不能发一个空的
+        # BOT_API_TOKEN —— 否则 bot 会拿非空的 API_TOKEN 去比对空串，全线 401。
+        # 确实想让 bot 用另一个令牌时，改这一行，并在 compose 里给它设 BOT_API_TOKEN。
+        proxy_set_header Authorization "Bearer ${API_TOKEN}";
+        proxy_read_timeout 60s;
+    }
+}
