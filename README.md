@@ -73,9 +73,9 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000
 **认证现在在前端做**：用户在登录页 `/login` 输入令牌，浏览器之后每次请求都带上它，
 反向代理**原样转发**这个头。
 
-> 以前 Docker 部署里是 nginx **无条件注入** token，结果是「任何能访问到 8080 端口的人都能进来」。
-> 现在 nginx 模板改成原样转发 `Authorization`（见 `nginx.conf.template`），
-> 所以前端必须让用户输入令牌 —— 这就是这个登录页存在的原因。
+> 这个仓库**不产出镜像、也不带 nginx**。它只负责 `npm ci && npm run build` 出 `dist/`，
+> 由**你自己的 web server** 托管，并在那里加上 `/api` 与 `/bot` 两条反代
+> （配置见下面「生产部署需要什么」）。认证就是在这个前提下由登录页承担的。
 
 ### 登录页怎么工作
 
@@ -135,16 +135,16 @@ VITE_API_TOKEN=<与后端 API_TOKEN 相同的值>
 - **要对外提供服务，必须再套一层真正的认证**（带登录态的 Nginx / Caddy / 网关 / SSO 等），
   由它做真实的鉴权、TLS 和访问控制，并把 `/api` 与 `/bot` 转发到内网的两个服务。
 
-### 三种部署形态下，登录页的实际效力
+### 两种部署形态下，登录页的实际效力
 
 | 部署形态 | `Authorization` 怎么处理 | 登录页 |
 |---|---|---|
 | `npm run dev`（vite dev 代理） | 代理原样转发浏览器带的头 | **生效** |
-| Docker（当前 `nginx.conf.template`） | `proxy_set_header Authorization $http_authorization` 原样转发 | **生效** |
-| 自改 nginx 成「注入服务端 token」 | `proxy_set_header Authorization "Bearer ${API_TOKEN}"` 无条件覆盖 | **形同虚设**：不带 token 的请求也会被补上正确令牌，等于端口一开谁都能进 |
+| 生产（你自己的 web server 反代） | `proxy_set_header Authorization $http_authorization;` 原样转发 | **生效** |
+| 反代改成「注入服务端 token」 | `proxy_set_header Authorization "Bearer <token>";` 无条件覆盖 | **形同虚设**：不带 token 的请求也会被补上正确令牌，等于端口一开谁都能进 |
 
-最后一种模式只在「完全可信的内网、不想每次输 token」时才有意义，那时应该把登录页
-理解成一个摆设，而不是安全措施。两种模式**只能选一**，注释写在 `nginx.conf.template` 里。
+最后一种只在「完全可信的内网、不想每次输 token」时才有意义，那时应该把登录页
+理解成一个摆设，而不是安全措施。
 
 ---
 
@@ -153,20 +153,30 @@ VITE_API_TOKEN=<与后端 API_TOKEN 相同的值>
 `npm run build` 产出的是一个**纯静态站点**，它自己**不带任何代理**——
 `vite.config.js` 里的 `/api` 和 `/bot` 代理**只在开发服务器上生效**。
 
-所以部署方必须在反向代理上提供两条同源转发，前端才能工作：
+所以你必须在一个 web server 上同时做三件事，而且它们**必须同源**
+（同一个 host:port，否则浏览器会跨域）：
 
 ```nginx
-location /api/  { proxy_pass http://127.0.0.1:8000/api/; }   # → 后端（纯数据层）
-location /bot/  { proxy_pass http://127.0.0.1:8082/;      }   # → bot，注意摘掉 /bot 前缀
+root /path/to/dist;
+
+location /     { try_files $uri $uri/ /index.html; }        # 静态文件 + SPA fallback
+location /api/ { proxy_pass http://127.0.0.1:8000;  }       # → 后端，前缀保留
+location /bot/ { proxy_pass http://127.0.0.1:8082/; }       # → bot，注意**摘掉** /bot 前缀
 ```
 
 要点：
 
-- `/bot` 前缀要**去掉**再转发（bot 自己的路径就是 `/api/status`、`/api/digest/*`），
-  与 `vite.config.js` 里 dev 代理的 `rewrite` 行为一致。
-- 反向代理是唯一能做真实鉴权的地方（见上一节）。
-- 如果前端与两个服务不同源，改用 `VITE_API_BASE` / `VITE_BOT_BASE` 指定绝对地址，
-  并自行处理 CORS。
+- **`/api` 的 `proxy_pass` 结尾不要带路径**。写成 `http://127.0.0.1:8000/api/`
+  会把 `/api/notifications` 变成 `/api/api/notifications`，全线 404。
+- **`/bot` 前缀要去掉**再转发（bot 自己的路径就是 `/api/status`、`/api/digest/*`），
+  与 `vite.config.js` 里 dev 代理的 `rewrite` 行为一致。结尾的 `/` 就是干这个的。
+- **原样转发 `Authorization` 头**（`proxy_set_header Authorization $http_authorization;`），
+  否则登录页拿到的 token 会被丢掉。
+- 反向代理是唯一能做**真实**鉴权的地方（见上一节）。
+- 完整的 nginx 与 Caddy 配置片段见
+  [`xcollector-deploy/README.md`](../xcollector-deploy/README.md) 的「托管 dist」一节。
+- 如果前端与两个服务不同源，得改 `src/api/` 下的 baseURL 并自行处理 CORS ——
+  **不推荐**，同源反代是更省事的做法。
 
 ---
 
