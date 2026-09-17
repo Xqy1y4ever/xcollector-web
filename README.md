@@ -6,6 +6,10 @@
 每条解析结果旁边都必须能一眼看到它依据的**原文** —— 因为这套东西的核心诉求
 不是「总结得好看」，而是**截止时间不会错、不会漏**。
 
+> **项目主页与部署入口在
+> [`xcollector-deploy`](https://github.com/Xqy1y4ever/xcollector-deploy)**
+> —— 想看这套系统整体怎么跑、怎么装，从那里开始。
+
 ## 技术栈
 
 | | |
@@ -96,7 +100,7 @@ location /bot/ { proxy_pass http://127.0.0.1:8082/; }       # → bot，注意**
 - **原样转发 `Authorization` 头**，否则登录时输入的令牌会被丢掉。
 
 完整的 nginx 与 Caddy 配置见
-[`xcollector-deploy/README.md`](../xcollector-deploy/README.md) 的「托管 dist」一节。
+[`xcollector-deploy`](https://github.com/Xqy1y4ever/xcollector-deploy#托管-dist) 的「托管 dist」一节。
 
 ## 认证
 
@@ -175,4 +179,4 @@ Vite 只注入 `VITE_` 前缀的变量，要用得设成真实的环境变量。
 
 时间戳统一是**毫秒整数**，`due_at` 为 `null` 表示没解析出确定时间。
 完整的请求/响应约定见
-[`xcollector-backend/docs/api.md`](../xcollector-backend/docs/api.md)。
+[`xcollector-backend/docs/api.md`](https://github.com/Xqy1y4ever/xcollector-backend/blob/main/docs/api.md)。
