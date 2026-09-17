@@ -20,14 +20,14 @@ const PROFILES = {
     down: BACKEND_DOWN_MESSAGE,
     timeout: '后端响应超时，请确认服务是否卡住',
     unauthorized:
-      '未授权（401）：后端配置了 API_TOKEN，但前端没有带上或带错了。检查前端 .env.local 里的 VITE_API_TOKEN 是否与后端一致（改完要重启 dev / 重新 build），或把后端的 API_TOKEN 留空（仅本机开发）',
+      '未授权（401）：后端配置了 API_TOKEN，但这次请求没有带上正确的令牌。请到登录页重新输入后端的 API_TOKEN（令牌不匹配时后端会直接拒绝；若后端 API_TOKEN 留空则不校验，仅本机开发可这样）',
     label: '后端'
   },
   bot: {
     down: BOT_DOWN_MESSAGE,
     timeout: 'bot 响应超时，请确认服务是否卡住',
     unauthorized:
-      '未授权（401）：bot 配置了 API_TOKEN，但前端没有带上或带错了。检查前端 .env.local 里的 VITE_BOT_API_TOKEN 是否与 bot 一致（改完要重启 dev / 重新 build），或把 bot 的 API_TOKEN 留空（仅本机开发）',
+      '未授权（401）：bot 配置了 API_TOKEN，但这次请求没有带上正确的令牌。契约约定整套系统只有一个共享密钥（bot 在 BOT_API_TOKEN 为空时回退用 API_TOKEN 校验），所以到登录页重新输入令牌即可；如果你在登录页「高级」里单独填了 bot 令牌，请确认它与 bot 侧一致',
     label: 'bot'
   }
 }

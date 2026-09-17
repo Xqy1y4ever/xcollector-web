@@ -12,7 +12,9 @@ import vue from '@vitejs/plugin-vue'
 // 生产构建（`npm run build` 产出的 dist/）是一个纯静态站点，不带任何代理：
 // 部署方必须由自己的反向代理（Nginx / Caddy / 网关等）提供 /api 与 /bot 两条转发，
 // 分别指向后端与 bot，且 /bot 同样要**摘掉 `/bot` 前缀**（bot 自己的路径就是 /api/status、/api/digest/*）。
-// 反向代理也是唯一能做真实鉴权的地方；不要指望前端的 VITE_*_TOKEN（见 README「认证」一节）。
+// 反向代理要**原样转发**浏览器带的 Authorization 头（认证在前端登录页做，见 README「认证」一节）；
+// 不要在代理里无条件注入服务端 token，否则前端登录就形同虚设。
+// 反代同时是唯一能做「真正的鉴权 / TLS / 访问控制」的地方。
 const BACKEND_TARGET = process.env.XCOLLECTOR_BACKEND || 'http://127.0.0.1:8000'
 const BOT_TARGET = process.env.XCOLLECTOR_BOT || 'http://127.0.0.1:8082'
 

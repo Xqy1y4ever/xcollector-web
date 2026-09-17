@@ -44,9 +44,16 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
 
-        # 关键：token 在这里注入，不进前端 bundle。
-        # 前端就算配了 VITE_API_TOKEN，也会被这行覆盖成服务端持有的那个。
-        proxy_set_header Authorization "Bearer ${API_TOKEN}";
+        # 认证在前端做：用户在登录页输入 token，浏览器每次请求带上，
+        # nginx 原样转发。这样 token 既不进 JS bundle，也不是"谁都能进"。
+        proxy_set_header Authorization $http_authorization;
+
+        # ── 另一种模式（二者只能选一）──────────────────────────────
+        # 如果这个服务只在完全可信的内网里跑、不想每次输 token，把上面那行换成：
+        #     proxy_set_header Authorization "Bearer ${API_TOKEN}";
+        # 由 nginx 注入服务端持有的 token。代价是**前端登录就形同虚设** ——
+        # 不带 Authorization 的请求也会被补上正确的 token。
+        # ────────────────────────────────────────────────────────
 
         # 附件可能是图片，别让中间层缓存它们
         proxy_buffering off;
@@ -63,11 +70,10 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        # 契约说整套系统只有**一个**共享密钥：bot 在 BOT_API_TOKEN 为空时会回退
-        # 用 API_TOKEN 校验。所以这里必须发 API_TOKEN，不能发一个空的
-        # BOT_API_TOKEN —— 否则 bot 会拿非空的 API_TOKEN 去比对空串，全线 401。
-        # 确实想让 bot 用另一个令牌时，改这一行，并在 compose 里给它设 BOT_API_TOKEN。
-        proxy_set_header Authorization "Bearer ${API_TOKEN}";
+        # 同 /api/：认证交给前端的登录态。
+        # 注意契约说整套系统只有**一个**共享密钥：bot 在 BOT_API_TOKEN 为空时会
+        # 回退用 API_TOKEN 校验，所以前端把同一个 token 发过来就能过。
+        proxy_set_header Authorization $http_authorization;
         proxy_read_timeout 60s;
     }
 }

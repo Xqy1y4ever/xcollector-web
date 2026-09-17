@@ -67,38 +67,84 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 ---
 
-## 认证（API_TOKEN）：先读这一段
+## 认证：令牌存在浏览器里，先读这一段
 
-契约要求所有请求带 `Authorization: Bearer <API_TOKEN>`（token 为空则后端 / bot 不校验）。
-前端在两个 axios 实例上各挂了一个请求拦截器，**只在配置了 token 时才加这个头**：
+后端所有 `/api` 都要求 `Authorization: Bearer <API_TOKEN>`（token 为空则后端不校验）。
+**认证现在在前端做**：用户在登录页 `/login` 输入令牌，浏览器之后每次请求都带上它，
+反向代理**原样转发**这个头。
 
-| 变量 | 作用对象 | 不配置时 |
+> 以前 Docker 部署里是 nginx **无条件注入** token，结果是「任何能访问到 8080 端口的人都能进来」。
+> 现在 nginx 模板改成原样转发 `Authorization`（见 `nginx.conf.template`），
+> 所以前端必须让用户输入令牌 —— 这就是这个登录页存在的原因。
+
+### 登录页怎么工作
+
+- 用户输入的就是**后端的 `API_TOKEN`**（环境变量里的那一个）。
+- 点「登录」时会**真的去校验**：调 `GET /api/health`（该接口要求认证）并带上这个令牌。
+  - **200** → 登录成功。
+  - **401 / 403** → 提示「token 不正确」，**不写入任何 storage**。
+  - **网络错误 / 5xx** → **允许进入**，但给一条黄色警告（「后端不可达，无法验证 token」）。
+    理由：后端挂着的时候，用户最需要看的就是系统状态页（那里正显示「后端不可达」）；
+    把登录卡死反而让人没法诊断。
+- 登录后令牌存在浏览器里：
+
+  | 「记住我」 | 存在哪 | 效果 |
+  |---|---|---|
+  | 勾上（默认） | `localStorage` | 关掉浏览器也不用重新输 |
+  | 不勾 | `sessionStorage` | 关掉标签页即登出 |
+
+  两边用同一组 key（`xc.auth.token` / `xc.auth.botToken` / `xc.auth.remember`）。
+  `restore()` 先看 `sessionStorage` 再看 `localStorage`，并且**切换「记住我」时会清掉另一边的残留**，
+  避免「上次记住了、这次不记」却仍然自动登录。
+- **同一个 token 同时用于 `/api` 和 `/bot`**：契约约定整套系统只有**一个共享密钥**，
+  bot 在 `BOT_API_TOKEN` 为空时会回退用 `API_TOKEN` 校验。
+  登录页「高级」里有一个可选的 bot 令牌输入框，**留空即与上面相同**；
+  只有 bot 单独配了不同的 `BOT_API_TOKEN` 时才需要填。
+- 任何请求收到 **401/403** 都会清空登录态（内存 + 两侧 storage）并跳回 `/login`，
+  同时把原目标放进 `?redirect=`，登录成功后跳回原页面。
+
+### 预置令牌（开发 / CI 降级路径）
+
+`VITE_API_TOKEN` / `VITE_BOT_API_TOKEN` 仍然保留，作为**预置令牌**的降级路径：
+
+| 变量 | 作用对象 | 何时生效 |
 |---|---|---|
-| `VITE_API_TOKEN` | 后端 `/api/*` | 不发 `Authorization` 头 |
-| `VITE_BOT_API_TOKEN` | bot `/bot/api/*` | 不发 `Authorization` 头 |
+| `VITE_API_TOKEN` | 后端 `/api/*` | auth store 里没有令牌时用它 |
+| `VITE_BOT_API_TOKEN` | bot `/bot/api/*` | store 里没有 bot 令牌时用它（一般留空即可） |
 
-本地开发什么都不用配（两边 `API_TOKEN` 留空即可）。需要打开校验时，在根目录 `.env.local` 里写：
+也就是说，在 `.env.local` 里写死 token 后**可以跳过登录页**（适合开发、CI、E2E）：
 
 ```
 VITE_API_TOKEN=<与后端 API_TOKEN 相同的值>
-VITE_BOT_API_TOKEN=<与 bot API_TOKEN 相同的值>
 ```
 
-改完必须**重启 `npm run dev` / 重新 `npm run build`**——`import.meta.env.VITE_*` 是构建期内联的，不是运行时读取。
+注意 `import.meta.env.VITE_*` 是**构建期内联**的，改完必须重启 `npm run dev` / 重新 `npm run build`。
+登录页写入的令牌优先于它。
 
-### ⚠️ 这个做法**不是安全边界**，别把它当成安全措施
+### ⚠️ 这不是完整的鉴权，别把它当成安全措施
 
-- Vite 会把 `VITE_API_TOKEN` / `VITE_BOT_API_TOKEN` 的值**内联进打包产物**。
-  也就是说，token 以**明文**躺在 `dist/assets/*.js` 里，
-  **任何能打开这个页面的人都能读到它**（浏览器开发者工具看请求头，或者直接搜 bundle 都行）。
-- 所以它**只能挡住「随手访问接口」**——比如搜索引擎爬虫、局域网里乱扫端口的人、
-  或者不小心点开一个 API URL 的同事。它挡不住任何一个有心人。
-- **真正的边界是：不要把后端和 bot 直接暴露到公网。**
-  两者都应该只监听 `127.0.0.1`，或者只在内网 / 容器网络里可达。
-- **如果要对外提供服务，必须套一层带认证的反向代理**（Nginx / Caddy / 网关等），
-  由它来做真实的鉴权、TLS 和访问控制，并把 `/api` 与 `/bot` 转发到内网的两个服务。
-- 一句话：**配了 `VITE_API_TOKEN` ≠ 安全了**。它只是把「完全敞开」变成「需要先看一眼 bundle」。
-  任何写进前端的秘密都不是秘密；不要往这里放真正的凭据。
+- **令牌存在浏览器 storage 里（明文）**。
+  **任何能在这台浏览器上执行 JS 的东西都能读到它** —— XSS、恶意浏览器扩展、共用电脑上的下一个人。
+  页面里如果有任何 XSS 注入点，令牌就会泄露，之后攻击者拿着它就能直接打后端和 bot。
+- **这不是账号体系**：它是**一个共享密钥**，不是按用户的登录。
+  **所有登录的人权限完全一样**，没有角色、没有审计、没法单独吊销某个人
+  （要换密钥只能改后端 `API_TOKEN`，所有人一起重输）。
+- **真正的边界仍然是：不要把后端和 bot 直接暴露到公网。**
+  两者都应该只监听 `127.0.0.1`，或者只在内网 / 容器网络里可达。登录页只是把
+  「端口一开谁都能进」变成「需要先知道密钥」。
+- **要对外提供服务，必须再套一层真正的认证**（带登录态的 Nginx / Caddy / 网关 / SSO 等），
+  由它做真实的鉴权、TLS 和访问控制，并把 `/api` 与 `/bot` 转发到内网的两个服务。
+
+### 三种部署形态下，登录页的实际效力
+
+| 部署形态 | `Authorization` 怎么处理 | 登录页 |
+|---|---|---|
+| `npm run dev`（vite dev 代理） | 代理原样转发浏览器带的头 | **生效** |
+| Docker（当前 `nginx.conf.template`） | `proxy_set_header Authorization $http_authorization` 原样转发 | **生效** |
+| 自改 nginx 成「注入服务端 token」 | `proxy_set_header Authorization "Bearer ${API_TOKEN}"` 无条件覆盖 | **形同虚设**：不带 token 的请求也会被补上正确令牌，等于端口一开谁都能进 |
+
+最后一种模式只在「完全可信的内网、不想每次输 token」时才有意义，那时应该把登录页
+理解成一个摆设，而不是安全措施。两种模式**只能选一**，注释写在 `nginx.conf.template` 里。
 
 ---
 
@@ -134,15 +180,17 @@ xcollector-web/
 ├── .gitignore
 ├── README.md
 └── src/
-    ├── main.js                 # 应用入口：Element Plus 全量注册 + 全量图标注册 + 全局兜底错误处理
-    ├── App.vue                 # 路由出口
+    ├── main.js                 # 应用入口：Element Plus 全量注册 + 全量图标注册 + 全局兜底错误处理 + 挂载前恢复登录态
+    ├── App.vue                 # 路由出口（登录页不渲染顶栏，见「认证」一节）
     ├── router/
-    │   └── index.js            # 两个路由：/（通知台）、/health（系统状态）
+    │   └── index.js            # 路由：/login（公开）、/（通知台）、/health（系统状态）+ 认证守卫
     ├── api/
-    │   ├── client.js           # 后端 axios 实例（/api）+ 通知接口 + Authorization 拦截器
+    │   ├── client.js           # 后端 axios 实例（/api）+ 通知接口 + Authorization 拦截器 + 401 处理
     │   ├── bot.js              # bot axios 实例（/bot）+ status/digest 接口 + Authorization 拦截器
+    │   ├── token.js            # 当前令牌的模块级持有者（store 写、拦截器读，用来打破循环依赖）
     │   └── errors.js           # 异常 → 中文文案（两个实例共用，含 401 指引）
     ├── stores/
+    │   ├── auth.js             # 登录态：令牌 / 记住我 / restore / login（真校验）/ logout
     │   ├── notifications.js    # 通知列表 / 详情 / 修正 / 已读（数据来自后端）
     │   └── health.js           # bot 系统状态 + 后端可达性探针 + digest 预览与发送
     ├── utils/
@@ -152,10 +200,11 @@ xcollector-web/
     ├── styles/
     │   └── global.css          # 全局样式（卡片、evidence 块、状态点、盲区面板等）
     ├── views/
+    │   ├── LoginView.vue           # 登录 /login（公开路由，输入后端 API_TOKEN）
     │   ├── NotificationBoard.vue   # 通知台 /
     │   └── HealthView.vue          # 系统状态 /health
     └── components/
-        ├── AppHeader.vue               # 顶栏：标题 / 连接状态点 / 盲区角标 / 刷新 / 最后同步时间
+        ├── AppHeader.vue               # 顶栏：标题 / 连接状态点 / 盲区角标 / 刷新 / 退出登录 / 最后同步时间
         ├── NotificationCard.vue        # 通知卡片（左侧大号 DDL + 右侧正文 + 标签）
         ├── NotificationDetail.vue      # 详情抽屉（左「解析结果」可编辑 / 右「原文证据」）
         ├── NotificationFormPanel.vue   # 详情里的修正表单
@@ -165,6 +214,15 @@ xcollector-web/
 ---
 
 ## 界面说明
+
+### 登录 `/login`
+
+- 居中卡片，移动端占满可用宽度；「访问令牌」`type=password` + `show-password`，**回车即提交**。
+- 可折叠的「高级」区：可选的 **bot 令牌**（留空则与上面相同）。
+- 「记住我」默认勾上，标签写明「关掉浏览器也不用重新输」。
+- 校验失败用红色 `el-alert`；后端不可达 / 5xx 用黄色 `el-alert` 提示但**仍然进入**。
+- 底部小字说明「令牌存在浏览器里，只适合私有部署，别把端口暴露到公网」。
+- 未登录访问任何受保护路由都会被守卫送到这里，并在 `?redirect=` 里记住原目标。
 
 ### 通知台 `/`
 
@@ -244,7 +302,7 @@ bot（前缀 `/bot`，代理层会摘掉 `/bot`）：
 `blindspots` 字段也已删除（盲区改由 bot 的 `/api/status` 提供）。
 
 时间戳统一为**毫秒 int**；`due_at` 为 `null` 表示未解析出确定时间。
-所有请求带 `Authorization: Bearer <API_TOKEN>`——见上文「认证（API_TOKEN）」。
+所有请求带 `Authorization: Bearer <API_TOKEN>`——见上文「认证：令牌存在浏览器里」。
 
 ---
 
@@ -255,3 +313,5 @@ bot（前缀 `/bot`，代理层会摘掉 `/bot`）：
 3. **任何解析结果旁边必须有 `evidence`**；卡片上直接可见，不能只放在详情里。
 4. 后端缺席时**不允许白屏或未捕获异常**：`main.js` 有全局兜底，store 把异常翻译成中文文案，
    页面显示 `el-empty` + 明确提示。
+5. **令牌只在 `src/api/token.js` 这一个模块里持有**，由 `stores/auth.js` 写入。
+   不要在组件或 api 模块里再 import auth store（那会形成循环依赖，见 `src/api/token.js` 的注释）。

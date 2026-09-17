@@ -1,6 +1,8 @@
 import axios from 'axios'
 
 import { BACKEND_DOWN_MESSAGE, humanizeError, isOfflineError } from './errors'
+import { clearActiveTokens, getActiveToken } from './token'
+import { replaceTo } from '../router/navigation'
 
 /**
  * 后端（纯数据层）的 axios 实例。
@@ -11,6 +13,8 @@ import { BACKEND_DOWN_MESSAGE, humanizeError, isOfflineError } from './errors'
  *
  * 契约要求所有 `/api` 请求带 `Authorization: Bearer <API_TOKEN>`（token 为空则后端不校验）。
  * 这里统一在请求拦截器里加头，见下方 applyBearerToken。
+ * 令牌来源是 `stores/auth.js` 写进 `src/api/token.js` 的**模块级持有者**（用户在登录页输入），
+ * 不是构建期内联的常量 —— 依赖方向与破环理由见 src/api/token.js 的注释。
  *
  * 注意：bot 的接口走另一个实例（src/api/bot.js → `/bot`），两者职责不同，
  * 见 xcollector-backend/docs/api.md 第 9 节。
@@ -23,9 +27,6 @@ export const http = axios.create({
   headers: { 'Content-Type': 'application/json' }
 })
 
-/** 后端共享密钥：必须与后端进程的 API_TOKEN 一致；不配置则不发 Authorization 头 */
-const API_TOKEN = import.meta.env.VITE_API_TOKEN || ''
-
 /**
  * 给请求配置加 `Authorization: Bearer <token>`。
  *
@@ -33,10 +34,10 @@ const API_TOKEN = import.meta.env.VITE_API_TOKEN || ''
  * @param {string} token 为空时原样返回、**不加头**（本地开发不受影响）
  * @param {string} [marker] 打标记用的字段名，便于断言拦截器确实按 token 有无工作
  *
- * ⚠️ 这不是安全边界：Vite 会把 `import.meta.env.VITE_*` **内联进打包产物**，
- * token 会以明文出现在 dist 的 JS 文件里，任何能打开这个页面的人都能读到。
- * 它只能挡住「随手 curl 一下接口」，真正的边界是不要把后端暴露到公网。
- * 详见 README 的「认证（API_TOKEN）：先读这一段」。
+ * ⚠️ 这不是安全边界：令牌是**明文**存在浏览器 storage / 内存里的共享密钥。
+ * 任何能在这台浏览器上执行 JS 的东西都能读到它；XSS 会泄露它。
+ * 它只能挡住「没有密钥的随手访问」，真正的边界是不要把后端暴露到公网。
+ * 详见 README 的「认证：令牌存在浏览器里，先读这一段」。
  */
 export function applyBearerToken(config, token, marker) {
   if (!token) return config
@@ -49,9 +50,96 @@ export function applyBearerToken(config, token, marker) {
   return config
 }
 
-http.interceptors.request.use((config) =>
-  applyBearerToken(config, API_TOKEN, '__xcBackendTokenApplied')
+/* ------------------------------------------------------------------ *
+ * 401/403 处理：清空登录态 + 跳登录页（带防死循环与防抖）
+ * ------------------------------------------------------------------ */
+
+/** 同一时间只允许一次 401 跳转，避免并发请求把路由刷成一串 replace */
+let redirectingToLogin = false
+
+/**
+ * 401 之后的收尾：清空登录态（内存 + 两边 storage）并跳登录页。
+ *
+ * 用 replace 而不是 push：401 之后不应把当前页面留在历史里，
+ * 否则用户点浏览器「后退」会再次撞上一个必然 401 的页面。
+ *
+ * @param {string} fullPath 被拦下来的原目标，登录成功后跳回去
+ */
+function goToLogin(fullPath) {
+  // 已经在登录页：登录请求自己校验失败时会走到这里，直接不跳，否则就是死循环。
+  // 注意这个判断必须在清空登录态之前做。
+  const current = window.location.pathname + window.location.search
+  if (current.indexOf('/login') === 0) return
+  // 已经开始跳转就不再重复（并发请求会同时返回 401）
+  if (redirectingToLogin) return
+  redirectingToLogin = true
+
+  // 清空登录态。用 store 自己的 logout()：它会同时清空**两侧 storage**。
+  // 只清内存令牌是不够的 —— 刷新页面时 restore() 会把旧 token 从 storage 里捞回来，
+  // 于是用户又被踢回登录页，形成「刷新即踢」的循环。
+  //
+  // 这里用动态 import 而不是顶层静态 import：auth store 顶层就 import 了本文件，
+  // 静态 import 会把 client ↔ store 拉成初始化环。这个 import 发生在 401 之后，
+  // 那时两个模块都已经初始化完了，是安全的。
+  import('../stores/auth')
+    .then((authMod) => {
+      authMod.useAuthStore().logout()
+    })
+    .catch(() => {
+      // 连 store 都加载不了：至少把内存里的令牌清掉，不能让后续请求继续带着过期令牌
+      clearActiveTokens()
+    })
+    .finally(() => {
+      // 导航走 router/navigation.js 的模块级持有者（由 router/index.js 注册），
+      // 所以这里不需要 import router——错误处理路径上不做任何 .vue 相关的加载。
+      replaceTo({ path: '/login', query: { redirect: fullPath } })
+      // 留一个很短的空窗：路由 replace 是异步的，立刻复位会让同一批并发请求重复跳转
+      setTimeout(() => {
+        redirectingToLogin = false
+      }, 300)
+    })
+}
+
+function handleUnauthorized(error) {
+  const config = (error && error.config) || {}
+  // 登录校验请求自己返回 401/403：这是「令牌输错了」，不是「登录态过期」。
+  // 绝不能触发登出 + 跳转 —— 那会把用户刚输入的内容清掉，还会形成跳转循环。
+  if (config.__xcAuthCheck) return
+  const fullPath =
+    (typeof window !== 'undefined' && window.location
+      ? window.location.pathname + window.location.search
+      : '/') || '/'
+  goToLogin(fullPath)
+  // 不改写文案：errors.js 的 humanizeError 会按 `error.response.status` 给出
+  // 「未授权（401）：…请到登录页重新输入后端的 API_TOKEN」那套中文指引（此处保留）。
+}
+
+http.interceptors.request.use((config) => {
+  // 认证探针自己带 token（config.headers.Authorization 已设），不走登录态默认值；
+  // 打了 __xcAuthCheck 的请求同样跳过，见 stores/auth.js 的 login()
+  if (config && (config.__xcSkipStoreToken || config.__xcAuthCheck)) return config
+  return applyBearerToken(config, getActiveToken(), '__xcBackendTokenApplied')
+})
+
+http.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const status = error && error.response ? error.response.status : 0
+    if (status === 401 || status === 403) handleUnauthorized(error)
+    return Promise.reject(error)
+  }
 )
+
+/** 这个异常是不是「认证探针自己的 401/403」（而不是登录态过期） */
+export function isAuthCheckError(error) {
+  return !!(error && error.config && error.config.__xcAuthCheck)
+}
+
+/** 这个异常是不是后端返回了 5xx（后端自己坏了，不代表令牌错） */
+export function isServerError(error) {
+  const status = error && error.response ? error.response.status : 0
+  return status >= 500 && status <= 599
+}
 
 // 错误文案只有一份实现（src/api/errors.js），这里原样再导出，
 // 让既有 `import { humanizeError } from '../api/client'` 的调用方不用改。
@@ -105,18 +193,34 @@ export async function setNotificationRead(id, read) {
 }
 
 /* ------------------------------------------------------------------ *
- * 存储健康（仅用于「后端可达性」探针）
+ * 存储健康（「后端可达性」探针 + 登录页的令牌校验）
  * ------------------------------------------------------------------ */
 
 /**
  * GET /api/health
  *
  * 只报存储自身（契约第 7 节），不含 OneBot / LLM / 流水线——那些现在归 bot。
- * 系统状态页用它来独立探一次后端：bot 活着但后端挂了，消息就存不进去，
- * 这是最重要的运维信号，不能只信 bot 自报的 backend.reachable。
+ * 两个用途：
+ *   1. 系统状态页独立探一次后端：bot 活着但后端挂了，消息就存不进去，
+ *      这是最重要的运维信号，不能只信 bot 自报的 backend.reachable。
+ *   2. **登录页校验令牌**：该接口要求认证，所以能拿它区分「密钥对不对」。
+ *
+ * @param {{ authToken?: string, skipStoreToken?: boolean, authCheck?: boolean, timeout?: number }} [opts]
+ *   authToken      显式使用的令牌（覆盖当前登录态）；一般只在登录校验时传
+ *   skipStoreToken 不要用「当前登录态」的令牌（避免旧值盖掉用户刚输入的值）
+ *   authCheck      标记这是认证探针：它的 401 不触发登出跳转（防死循环）
+ *   timeout        覆盖默认超时
  */
-export async function fetchBackendHealth() {
-  const { data } = await http.get('/health')
+export async function fetchBackendHealth(opts = {}) {
+  const config = {}
+  if (opts.skipStoreToken) config.__xcSkipStoreToken = true
+  if (opts.authCheck) config.__xcAuthCheck = true
+  if (opts.timeout) config.timeout = opts.timeout
+  if (opts.authToken) {
+    // 显式带 Authorization：拦截器看到已有该头就不会覆盖（applyBearerToken 的约定）
+    config.headers = { Authorization: `Bearer ${opts.authToken}` }
+  }
+  const { data } = await http.get('/health', config)
   return data
 }
 
@@ -144,6 +248,9 @@ export default {
   setNotificationRead,
   fetchBackendHealth,
   attachmentUrl,
+  applyBearerToken,
+  isAuthCheckError,
+  isServerError,
   humanizeError,
   isOfflineError,
   BACKEND_DOWN_MESSAGE

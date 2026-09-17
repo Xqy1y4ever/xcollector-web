@@ -5,8 +5,11 @@ dist/
 !.env.example
 *.log
 .git/
+.github/
 .gitignore
 .gitattributes
+Dockerfile
+.dockerignore
 .vscode/
 .idea/
 tmp-verify.mjs

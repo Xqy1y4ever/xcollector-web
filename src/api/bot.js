@@ -2,6 +2,7 @@ import axios from 'axios'
 
 import { applyBearerToken } from './client'
 import { BOT_DOWN_MESSAGE, humanizeError, isOfflineError } from './errors'
+import { getActiveBotToken } from './token'
 
 /**
  * bot 的 axios 实例。
@@ -13,8 +14,10 @@ import { BOT_DOWN_MESSAGE, humanizeError, isOfflineError } from './errors'
  * http://127.0.0.1:8082（见 vite.config.js 的 XCOLLECTOR_BOT）。
  * 生产部署时如果 bot 与前端不同源，把 VITE_BOT_BASE 设为 bot 地址即可。
  *
- * 认证：跟后端一样用 `Authorization: Bearer <token>`（整套系统只有一个共享密钥口径），
- * 只是前端这边 bot 单独读 `VITE_BOT_API_TOKEN`，方便两个服务配不同的值。
+ * 认证：跟后端一样用 `Authorization: Bearer <token>`。契约约定整套系统**只有一个共享密钥**——
+ * bot 在 BOT_API_TOKEN 为空时会回退用 API_TOKEN 校验，所以这里默认就用用户在登录页输入的那一个；
+ * 登录页的「高级」区允许单独覆盖一个 bot 令牌。
+ * 令牌来源是 `stores/auth.js` 写进 `src/api/token.js` 的模块级持有者（破环理由见该文件注释）。
  */
 const baseURL = import.meta.env.VITE_BOT_BASE || '/bot'
 
@@ -24,13 +27,10 @@ export const httpBot = axios.create({
   headers: { 'Content-Type': 'application/json' }
 })
 
-/** bot 共享密钥：必须与 bot 进程的 API_TOKEN 一致；不配置则不发 Authorization 头 */
-const BOT_API_TOKEN = import.meta.env.VITE_BOT_API_TOKEN || ''
-
 // 加头逻辑与后端共用一份实现（client.js 的 applyBearerToken），不复制第二份。
-// ⚠️ 同 client.js：token 会被打进 JS bundle，不是安全边界，只能挡「随手访问接口」。
+// ⚠️ 同 client.js：令牌是明文共享密钥，不是安全边界，真正的边界是不要把端口暴露到公网。
 httpBot.interceptors.request.use((config) =>
-  applyBearerToken(config, BOT_API_TOKEN, '__xcBotTokenApplied')
+  applyBearerToken(config, getActiveBotToken(), '__xcBotTokenApplied')
 )
 
 /** GET /bot/api/status → 契约第 9 节的 status 对象 */

@@ -1,5 +1,5 @@
 <template>
-  <header class="xc-header">
+  <header v-if="visible" class="xc-header">
     <div class="xc-header__inner">
       <div class="xc-header__left">
         <router-link to="/" class="xc-header__brand">
@@ -39,6 +39,25 @@
           <el-icon style="margin-right: 4px"><Refresh /></el-icon>
           刷新
         </el-button>
+
+        <!--
+          退出：登出后跳登录页。
+          用 el-dropdown 而不是再放一个按钮：移动端顶栏只有 48px 高（见下方 media query），
+          横向再挤一个「退出」会把标题和状态点压变形；下拉触发器做成一个小图标即可。
+        -->
+        <el-dropdown trigger="click" @command="onCommand">
+          <span class="xc-header__account" title="账号">
+            <el-icon><SwitchButton /></el-icon>
+          </span>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="logout">
+                <el-icon style="margin-right: 6px"><SwitchButton /></el-icon>
+                退出登录
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
     </div>
   </header>
@@ -46,9 +65,10 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
-import { Bell, Refresh } from '@element-plus/icons-vue'
+import { useRoute, useRouter } from 'vue-router'
+import { Bell, Refresh, SwitchButton } from '@element-plus/icons-vue'
 
+import { useAuthStore } from '../stores/auth'
 import { useHealthStore } from '../stores/health'
 import { timeAgoShort } from '../utils/time'
 
@@ -62,7 +82,22 @@ const props = defineProps({
 const emit = defineEmits(['refresh'])
 
 const router = useRouter()
+const route = useRoute()
 const healthStore = useHealthStore()
+const authStore = useAuthStore()
+
+/**
+ * 兜底：`/login` 这类公开页不该出现顶栏（登录页的 view 本来就没引用这个组件）。
+ * 万一以后有公开页复用了顶栏，这里直接不渲染，避免在未登录状态泄露系统状态点。
+ */
+const visible = computed(() => !(route.meta && route.meta.public))
+
+/** 退出：清空登录态 → 回登录页。用 replace，避免「后退」回到已登出的页面 */
+function onCommand(command) {
+  if (command !== 'logout') return
+  authStore.logout()
+  router.replace({ path: '/login' })
+}
 
 /** 每秒 tick 一次，让「10 秒前」自己走字 */
 const tick = ref(Date.now())
@@ -234,6 +269,25 @@ watch(
   gap: 10px;
 }
 
+/* 账号下拉触发器：一个紧凑的方形图标按钮，移动端顶栏 48px 也放得下 */
+.xc-header__account {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  color: var(--xc-text-regular);
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+}
+
+.xc-header__account:hover {
+  background: var(--xc-bg-soft);
+  color: var(--xc-primary);
+}
+
 @media (max-width: 768px) {
   .xc-header__inner {
     padding: 4px 10px;
@@ -244,7 +298,7 @@ watch(
     flex-wrap: nowrap;
   }
 
-  /* 移动端顶栏只留标题 + 状态点 + 刷新 */
+  /* 移动端顶栏只留标题 + 状态点 + 刷新 + 退出 */
   .xc-header__nav {
     display: none;
   }
@@ -263,6 +317,16 @@ watch(
   /* 移动端优先保证状态点 + 角标可见，同步时间的绝对时间省掉 */
   .xc-header__sync {
     font-size: 11px;
+  }
+
+  /* 移动端再收一点：48px 高度里「刷新」按钮 + 退出图标不能挤掉状态点 */
+  .xc-header__right {
+    gap: 4px;
+  }
+
+  .xc-header__account {
+    width: 24px;
+    height: 24px;
   }
 }
 </style>
