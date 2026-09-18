@@ -48,7 +48,7 @@ npm test        # store：增量合并、多选、批量操作（进程内跑真
 **方式一：Release 附件**（部署机上不需要装 Node）
 
 ```bash
-curl -L https://github.com/Xqy1y4ever/xcollector-web/releases/latest/download/dist.tar.gz \
+curl -L https://github.com/Xqy1y4ever/xcollector-web/releases/download/latest/dist.tar.gz \
   | tar xz -C /var/www/xcollector
 # → /var/www/xcollector/dist/
 ```
