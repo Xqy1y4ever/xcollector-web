@@ -30,7 +30,9 @@ export const EMPTY_BOT_STATUS = {
   whitelist: {
     groups: [],
     senders: [],
-    sender_mode: ''
+    sender_mode: '',
+    // undefined = 旧版 bot 没给这个字段，此时前端不提示（见 HealthView）
+    ready: undefined
   },
   pipeline: {
     today_ingested: 0,
@@ -103,7 +105,13 @@ export function normalizeBotStatus(raw) {
       senders: Array.isArray(data.whitelist && data.whitelist.senders)
         ? data.whitelist.senders.filter(isPlainObject)
         : [],
-      sender_mode: str(data.whitelist && data.whitelist.sender_mode)
+      sender_mode: str(data.whitelist && data.whitelist.sender_mode),
+      // 白名单是否配到了"能收到东西"。字段缺失时保持 undefined —— 旧版 bot
+      // 不会给这个字段，前端要能区分"没配好"和"不知道"，不能误报。
+      ready:
+        data.whitelist && typeof data.whitelist.ready === 'boolean'
+          ? data.whitelist.ready
+          : undefined
     },
     pipeline: {
       today_ingested: toCount(data.pipeline && data.pipeline.today_ingested),

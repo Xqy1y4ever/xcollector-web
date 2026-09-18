@@ -254,6 +254,24 @@
               </el-tag>
             </div>
           </template>
+          <!-- 白名单是 fail-closed 的：两个都空 = bot 一条消息都不会处理。
+               这种情况表现出来只是"连上了但什么都不干"，跟连不上 NapCat 长得一样，
+               所以必须在最显眼的位置说清楚，否则会往错的方向查。 -->
+          <el-alert
+            v-if="whitelistReady === false"
+            type="warning"
+            :closable="false"
+            show-icon
+            title="白名单没配好，bot 会忽略所有消息"
+            style="margin-bottom: 12px"
+          >
+            空白名单是「一个都不收」，不是「全都收」。请在 bot 的
+            <span class="xc-mono">.env</span> 里设置
+            <span class="xc-mono">GROUP_WHITELIST</span>（要处理的群）和
+            <span class="xc-mono">SENDER_WHITELIST</span>（发布通知的人）。
+            只想先跑通，可以临时把 <span class="xc-mono">SENDER_WHITELIST_MODE</span>
+            设成 <span class="xc-mono">off</span>。
+          </el-alert>
           <el-descriptions :column="1" size="small" border>
             <el-descriptions-item label="群白名单">
               <template v-if="whitelist.groups.length">
@@ -620,6 +638,16 @@ const backendTag = computed(() => {
 
 /* ---------------- 群列表辅助 ---------------- */
 const whitelistIds = computed(() => new Set(whitelistGroupIds(whitelist.value)))
+
+/**
+ * 白名单是否配到了"能收到东西"。
+ * `undefined` = 后端没给这个字段（旧版 bot），此时**不提示** ——
+ * 宁可不显示，也不要因为字段缺失就误报一条警告。
+ */
+const whitelistReady = computed(() => {
+  const v = whitelist.value && whitelist.value.ready
+  return typeof v === 'boolean' ? v : undefined
+})
 
 function inWhitelist(row) {
   // bot 已经算好 in_whitelist；字段缺失时用 status.whitelist 自己兜一次
