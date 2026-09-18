@@ -3,18 +3,70 @@
     <AppHeader :loading="loading" :last-synced-at="lastLoadedAt" @refresh="load(true)" />
 
     <div class="xc-page">
-      <!-- ① bot 不可达：整个页面的数据都来自 bot，先把这件事说清楚，不要白屏 -->
-      <el-alert
-        v-if="store.error"
-        type="error"
-        :closable="false"
-        show-icon
-        :title="store.error"
-        description="本页的 OneBot / LLM / 流水线 / 盲区 / 缺口 / digest 全部来自 bot 的 /api/status。请确认 bot 进程已在 127.0.0.1:8082 运行（vite 代理 /bot → 该地址）。下面的卡片是默认值，不代表真实状态。"
-        style="margin-top: 16px"
-      />
+      <!--
+        ① 运营者访问区（永远在最上面）
+        这一页是运营者视角：bot 的状态接口只认管理令牌，普通用户手里只有自己的
+        UserToken，所以「没填令牌 → 看不到」是设计如此。这里必须把「为什么」说清楚，
+        而不是让他看到一片红色的「bot 不可达」—— 那会让人以为系统坏了。
+      -->
+      <el-card shadow="never" class="xc-operator-card">
+        <template #header>
+          <div class="xc-card-header">
+            <span>运营者访问</span>
+            <el-tag v-if="operatorConfigured" type="success" size="small" effect="plain">
+              已填写运营者令牌 {{ store.operatorHint }}
+            </el-tag>
+            <el-tag v-else type="info" size="small" effect="plain">未填写</el-tag>
+          </div>
+        </template>
 
-      <!-- ② 后端不可达：bot 活着但存不进去，这是最要紧的运维信号，置顶报警 -->
+        <el-alert
+          :type="store.notice.type"
+          :closable="false"
+          show-icon
+          :title="store.notice.title"
+          style="margin-bottom: 12px"
+        >
+          <div style="font-size: 12.5px; line-height: 1.8">
+            {{ store.notice.detail }}
+          </div>
+          <div v-if="!operatorConfigured" style="margin-top: 6px; font-size: 12.5px">
+            也可以在本机用命令行直接看：
+            <div class="xc-mono xc-operator-cmd">
+              curl -H "Authorization: Bearer $API_TOKEN" http://127.0.0.1:8082/api/status
+            </div>
+            <div class="xc-muted" style="margin-top: 4px">
+              （bot 的接口在 <span class="xc-mono">/api/status</span> 上，
+              本机部署时就是 8082 端口；这一页只是把它渲染出来。）
+            </div>
+          </div>
+        </el-alert>
+
+        <div class="xc-operator-form">
+          <el-input
+            v-model="operatorInput"
+            type="password"
+            show-password
+            clearable
+            placeholder="管理令牌：API_TOKEN / BOT_API_TOKEN"
+            :disabled="store.loading"
+            @keyup.enter="applyOperator"
+          />
+          <el-button type="primary" :disabled="store.loading" @click="applyOperator">
+            用这个令牌查看
+          </el-button>
+          <el-button v-if="operatorConfigured" @click="clearOperator">清除</el-button>
+        </div>
+
+        <div class="xc-muted" style="font-size: 11.5px; line-height: 1.7; margin-top: 8px">
+          「记住」是<strong>只存本次标签页</strong>（sessionStorage）：关掉标签页就没了，
+          <strong>不会写进 localStorage，也不会进构建产物</strong>。
+          它和你自己的登录令牌是两套东西 —— 这里的失败不会把你踢下线。
+          这一页有所有人的盲区计数，别在公共电脑上填。
+        </div>
+      </el-card>
+
+      <!-- ② 后端不可达：最要紧的运维信号，置顶报警（走的是用户自己的令牌，不需要运营者身份） -->
       <el-alert
         v-if="backendCard.level === 'warning'"
         type="warning"
@@ -30,6 +82,20 @@
           </template>
         </div>
       </el-alert>
+
+      <!--
+        ③ 没有运营者令牌时，下面的卡片全是默认值：明说「这些不是真实状态」，
+        而不是让一堆 0 和灰点看起来像真的。
+      -->
+      <el-alert
+        v-if="!operatorConfigured"
+        type="info"
+        :closable="false"
+        show-icon
+        title="下面的卡片是默认值，不代表真实状态"
+        description="填上运营者令牌之后才会真的去读 bot 的 /api/status。"
+        style="margin-top: 12px"
+      />
 
       <!-- 主卡片 -->
       <div class="xc-health-grid" style="margin-top: 18px">
@@ -430,35 +496,118 @@
         </div>
       </div>
 
-      <!-- 每日 digest：预览与发送都打 bot（后端已不再提供这两个接口） -->
+      <!-- 每日 digest：预览打 bot（digest 是**按人**组装的，见下面的说明） -->
       <div class="xc-section-title">
         <span>每日 digest</span>
         <span class="xc-count">{{ digestInfo.statusText }}</span>
       </div>
       <el-card shadow="never">
         <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center">
-          <el-button :loading="store.digestLoading" @click="previewDigest">
-            <el-icon style="margin-right: 4px"><View /></el-icon>
-            预览 digest
-          </el-button>
-          <!-- 只有显式填了管理令牌才出现：网页令牌发消息会被 bot 403 -->
-          <el-button
-            v-if="canSendDigest"
-            type="primary"
-            :loading="store.digestSending"
-            @click="sendToQQ"
+          <el-tooltip
+            :disabled="operatorConfigured"
+            content="预览走 bot 的 /api/digest/preview，只认运营者令牌 —— 请先在上面填写"
+            placement="top"
           >
-            <el-icon style="margin-right: 4px"><Promotion /></el-icon>
-            发送到 QQ
-          </el-button>
+            <span>
+              <el-button
+                :loading="store.digestLoading"
+                :disabled="!operatorConfigured"
+                @click="previewDigest"
+              >
+                <el-icon style="margin-right: 4px"><View /></el-icon>
+                预览 digest
+              </el-button>
+            </span>
+          </el-tooltip>
+
+          <!-- 指定预览谁的：digest 是按人组装的，不指定就是「第一个收件人」 -->
+          <el-select
+            v-model="digestUserId"
+            :disabled="!operatorConfigured"
+            clearable
+            filterable
+            placeholder="收件人：默认第一个"
+            style="width: 240px"
+            @change="previewDigest"
+          >
+            <el-option
+              v-for="row in recipients"
+              :key="row.key"
+              :label="row.label"
+              :value="row.user_id"
+            />
+          </el-select>
+
           <span class="xc-muted" style="font-size: 12px">
-            预览走 bot 的 <span class="xc-mono">/api/digest/preview</span>（网页令牌即可）；
-            发送走 <span class="xc-mono">/api/digest/send</span>，**只认管理令牌** ——
-            因为它会真的往 QQ 发消息。想手动发就在登录页「高级」里填管理令牌，
-            否则等 bot 按 <span class="xc-mono">DIGEST_TIME</span> 自动发。
+            预览走 bot 的 <span class="xc-mono">/api/digest/preview</span>。
+            手动「发送到 QQ」不在网页上提供 —— 那个操作会真的发消息，请用 bot 自己的入口。
           </span>
         </div>
+
+        <!-- 预览的是谁，必须写出来：不然会以为预览的是自己那一份 -->
+        <div v-if="store.digestUserId || store.digestUserQq" class="xc-digest-target">
+          正在预览收件人
+          <strong>{{ store.digestUserQq ? `QQ ${store.digestUserQq}` : '（bot 没给 QQ）' }}</strong>
+          <span class="xc-muted"> user_id <span class="xc-mono">{{ store.digestUserId || '—' }}</span></span>
+          —— <strong>这不是你自己那一份</strong>，只是运营者视角下的抽样。
+        </div>
       </el-card>
+
+      <!-- 按用户的下钻：多用户之后「盲区有几个」不再是一个数 -->
+      <template v-if="perUser.length">
+        <div class="xc-section-title">
+          <span>按用户明细</span>
+          <span class="xc-count">{{ perUser.length }} 人</span>
+          <span class="xc-count">「盲区/冲突」按用户各算一份，上面的标量是累加值</span>
+        </div>
+        <el-table :data="perUser" size="small" border stripe style="width: 100%">
+          <el-table-column label="用户" min-width="180">
+            <template #default="{ row }">
+              <div>{{ row.display_name || '（没填显示名）' }}</div>
+              <div class="xc-muted xc-mono">{{ row.qq || row.user_id }}</div>
+            </template>
+          </el-table-column>
+          <el-table-column label="DDL 冲突" width="100" align="center">
+            <template #default="{ row }">
+              <span :class="{ 'xc-warn-text': row.conflict_count > 0 }">{{ row.conflict_count }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="低置信度" width="100" align="center">
+            <template #default="{ row }">
+              <span :class="{ 'xc-warn-text': row.low_confidence_count > 0 }">
+                {{ row.low_confidence_count }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="未确认缺口" width="110" align="center">
+            <template #default="{ row }">
+              <span :class="{ 'xc-warn-text': row.open_gap_alerts > 0 }">
+                {{ row.open_gap_alerts }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="今日已发摘要" width="120" align="center">
+            <template #default="{ row }">
+              <el-tag :type="row.digest_sent_today ? 'success' : 'info'" size="small" effect="plain">
+                {{ row.digest_sent_today ? '已发送' : '未发送' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="今日处理" width="150" align="center">
+            <template #default="{ row }">
+              <span v-if="row.stat_available" class="xc-muted" style="font-size: 12px">
+                入库 {{ row.ingested }} · 抽出 {{ row.extracted }}
+              </span>
+              <span v-else class="xc-muted" style="font-size: 12px">无统计</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="90" align="center">
+            <template #default="{ row }">
+              <el-button type="primary" link @click="previewFor(row)">预览摘要</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </template>
 
       <!-- 群列表：完全来自 bot status.groups -->
       <div class="xc-section-title">
@@ -565,11 +714,10 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { Promotion, View } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import { View } from '@element-plus/icons-vue'
 
 import AppHeader from '../components/AppHeader.vue'
-import { useAuthStore } from '../stores/auth'
 import { useHealthStore } from '../stores/health'
 import { formatDateTime, formatDuration, timeAgoShort, toMillis } from '../utils/time'
 import {
@@ -593,20 +741,27 @@ import {
  * 改从 bot status.blindspots + status.gap_alerts 取。
  * 白名单不再来自后端 `/api/config/meta`（接口已下线），改从 bot status.whitelist 取。
  */
+/**
+ * 系统状态页（**运营者视图**）。
+ *
+ * 数据来源（契约第 9 节）：
+ *   全部卡片 → bot `/api/status`（经 vite `/bot` 代理），**需要运营者令牌**
+ *   后端可达性 → 本页自己探一次后端 `/api/health`（走用户自己的 UserToken，不需要运营者身份）
+ * 盲区不再来自后端 `/api/notifications` 的 blindspots 字段（该字段已删除），
+ * 改从 bot status.blindspots + status.gap_alerts 取。
+ * 白名单不再来自后端 `/api/config/meta`（接口已下线），改从 bot status.whitelist 取。
+ *
+ * 为什么要有运营者令牌输入框：bot 的 `/api/*` 只认管理令牌，而普通用户手里只有
+ * 自己的 UserToken（bot 根本不认识它）。这是刻意的 —— 这一页里有**所有人**的
+ * 盲区计数、白名单、OneBot 连接状态。所以「没填令牌 → 看不到」是设计如此，
+ * 页面必须把这句话说出来，而不是显示「bot 不可达」。
+ */
 const store = useHealthStore()
-const authStore = useAuthStore()
 const router = useRouter()
 
-/**
- * 能不能「发送到 QQ」。
- *
- * 网页令牌**不允许**发消息（bot 那边会 403）：那个令牌必须交给登录页，而
- * 「任何人拿到它就能以你的身份发 QQ 消息」比"能改数据库"更直接。
- * 只有用户在登录页「高级」里显式填了管理令牌（BOT_API_TOKEN / API_TOKEN）
- * 才显示这个按钮 —— 那时他自己就是管理员，这是有意的。
- * 没填的人连按钮都看不到，不会点了才吃 403。
- */
-const canSendDigest = computed(() => !!authStore.botToken)
+/** 运营者令牌输入框的内容（只活在内存里，提交后由 store 写进 sessionStorage） */
+const operatorInput = ref('')
+const operatorConfigured = computed(() => store.operatorConfigured)
 
 const now = ref(Date.now())
 let tickTimer = null
@@ -625,6 +780,26 @@ const pipeline = computed(() => pipelineView(store.status.pipeline))
 const counts = computed(() => store.blindspotCounts)
 const blindspotTotal = computed(() => counts.value.total)
 const blindspotWindowDays = computed(() => Number(store.status.blindspots.window_days) || 0)
+
+/** 当前选中的预览收件人（空串 = 交给 bot 用第一个） */
+const digestUserId = ref('')
+
+/** 按用户的下钻明细（bot status.per_user；旧版 bot 没这个字段时为空数组） */
+const perUser = computed(() => (Array.isArray(store.status.per_user) ? store.status.per_user : []))
+
+/**
+ * 收件人下拉的可选项：优先用 bot 给的 `per_user`（有显示名和 QQ），
+ * 拿不到就退到 digest 相关的 recipients 快照。
+ */
+const recipients = computed(() =>
+  perUser.value
+    .filter((row) => row && row.user_id)
+    .map((row) => ({
+      user_id: String(row.user_id),
+      key: String(row.user_id),
+      label: `${row.display_name || '（没填显示名）'} · ${row.qq || row.user_id}`
+    }))
+)
 
 /* ---------------- 后端可达性 ---------------- */
 const backendCard = computed(() => backendReachability(store.status, store.backendProbe))
@@ -697,8 +872,41 @@ async function load(force = false) {
   if (force && store.error) ElMessage.error(store.error)
 }
 
+/**
+ * 填运营者令牌 → 立刻去读一次。
+ * 空输入直接忽略（不然「点了一下按钮」会把已有令牌清掉，很反直觉）。
+ */
+async function applyOperator() {
+  const value = operatorInput.value.trim()
+  if (!value) {
+    ElMessage.warning('请先粘贴管理令牌（API_TOKEN / BOT_API_TOKEN）')
+    return
+  }
+  store.setOperatorToken(value)
+  // 清掉输入框：令牌已经进 sessionStorage 了，没必要一直显示在屏幕上
+  operatorInput.value = ''
+  ElMessage.success('已记录本次标签页的运营者令牌，正在读取状态…')
+  await store.load({ force: true })
+  if (store.operatorRejected) ElMessage.error('运营者令牌无效，请重新填写')
+  else if (store.error) ElMessage.error(store.error)
+  else ElMessage.success('状态已刷新')
+}
+
+function clearOperator() {
+  store.setOperatorToken('')
+  operatorInput.value = ''
+  ElMessage.success('已清除运营者令牌（只影响本次标签页）')
+}
+
+/** 预览指定收件人的 digest（点表格里的「预览摘要」走这条） */
+async function previewFor(row) {
+  const uid = row && row.user_id ? String(row.user_id) : ''
+  digestUserId.value = uid
+  await store.previewDigest({ userId: uid })
+}
+
 async function previewDigest() {
-  await store.previewDigest()
+  await store.previewDigest({ userId: digestUserId.value })
 }
 
 async function copyDigest() {
@@ -715,32 +923,14 @@ async function copyDigest() {
   }
 }
 
-async function sendToQQ() {
-  try {
-    await ElMessageBox.confirm(
-      '将把 digest 真实推送到 QQ（dry_run=false）。确认发送？',
-      '发送到 QQ',
-      { confirmButtonText: '确认发送', cancelButtonText: '取消', type: 'warning' }
-    )
-  } catch (e) {
-    return
-  }
-  const r = await store.sendDigest(false)
-  if (r.ok && r.data && r.data.sent) {
-    ElMessage.success('已发送')
-  } else if (r.ok && r.data && r.data.sent === false) {
-    ElMessage.warning(`bot 未发送：${(r.data && r.data.error) || '未知原因'}`)
-  } else {
-    ElMessage.error(r.message || '发送失败')
-  }
-}
-
 function searchGroup(row) {
   // 跳到通知台并按群名搜索
   router.push({ path: '/', query: { group: row.group_name || row.group_id } })
 }
 
 onMounted(() => {
+  // 先恢复本次标签页里可能已经填过的运营者令牌，再决定要不要去打 bot
+  store.restoreOperator()
   load(false)
   tickTimer = setInterval(() => {
     now.value = Date.now()
@@ -804,5 +994,56 @@ onBeforeUnmount(() => {
   word-break: break-word;
   max-height: 50vh;
   overflow: auto;
+}
+
+/* 运营者访问区：永远在最上面，也是没填令牌时唯一可操作的区域 */
+.xc-operator-card {
+  margin-top: 16px;
+  /* 浅黄底：一眼就能认出「这一块和别的地方不是一回事（要额外的凭据）」 */
+  border-color: #f3d9b5;
+  background: #fffdf7;
+}
+
+.xc-operator-form {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.xc-operator-form .el-input {
+  flex: 1 1 260px;
+  min-width: 200px;
+}
+
+/* 命令行示例：等宽 + 可横向滚动，别把长 URL 折成两行看不懂 */
+.xc-operator-cmd {
+  margin-top: 4px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--xc-bg-soft);
+  border: 1px solid var(--xc-border);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+/* 「正在预览的是谁」——必须看得见，否则会把别人的 digest 当成自己的 */
+.xc-digest-target {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid #f3d9b5;
+  background: #fffdf7;
+  font-size: 12.5px;
+  line-height: 1.8;
+  color: var(--xc-text-regular);
+}
+
+@media (max-width: 768px) {
+  .xc-operator-form .el-input {
+    flex: 1 1 100%;
+  }
 }
 </style>

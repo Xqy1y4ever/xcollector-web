@@ -5,12 +5,12 @@
         <el-icon class="xc-login__logo"><Bell /></el-icon>
         <div class="xc-login__brand-text">
           <div class="xc-login__title">Xcollector · 官方通知</div>
-          <div class="xc-login__subtitle">输入访问令牌后进入通知台</div>
+          <div class="xc-login__subtitle">粘贴你的登录令牌后进入通知台</div>
         </div>
       </div>
 
       <el-card shadow="never" class="xc-login__card">
-        <!-- 校验失败（401/403）：令牌不对，不放行 -->
+        <!-- 令牌不对 / 是服务令牌 / 后端出错：都不放行 -->
         <el-alert
           v-if="errorText"
           type="error"
@@ -40,7 +40,7 @@
           <!-- 回车即提交：el-input 的 native form submit 会被 @submit.prevent 接住 -->
           <el-form-item prop="token" class="xc-login__item">
             <template #label>
-              <span class="xc-login__label">网页令牌</span>
+              <span class="xc-login__label">登录令牌</span>
             </template>
             <el-input
               v-model="form.token"
@@ -49,53 +49,23 @@
               show-password
               clearable
               autocomplete="current-password"
-              placeholder="后端/ bot 的 WEB_API_TOKEN"
+              placeholder="xc_ 开头的那串令牌"
               :disabled="submitting"
             />
             <div class="xc-login__hint">
-              后端与 bot 共用的 <span class="xc-mono">WEB_API_TOKEN</span>。
-              它只能<strong>读取、提交人工修正、标记已读</strong> —— 改不了数据库、
-              也不能发 QQ 消息。
+              就是你<strong>注册时拿到的那串</strong> <span class="xc-mono">xc_...</span> 令牌。
+              它既是登录凭证，也是这台浏览器访问后端的凭证。
             </div>
           </el-form-item>
 
           <el-form-item class="xc-login__item">
             <el-checkbox v-model="form.remember" :disabled="submitting">
-              记住我（关掉浏览器也不用重新输）
+              记住我（关掉浏览器也不用重新粘）
             </el-checkbox>
             <div class="xc-login__hint">
               勾上＝存在 localStorage；不勾＝只存在本次标签页（关掉标签页即登出）
             </div>
           </el-form-item>
-
-          <!-- 高级：管理员令牌。填了才解锁「发送到 QQ」这类会真的动手的操作 -->
-          <el-form-item class="xc-login__item">
-            <el-checkbox v-model="advanced" :disabled="submitting">
-              高级：我是管理员，填管理令牌解锁写操作
-            </el-checkbox>
-          </el-form-item>
-
-          <div v-if="advanced" class="xc-login__advanced">
-            <el-form-item prop="botToken" class="xc-login__item">
-              <template #label>
-                <span class="xc-login__label">管理令牌（可选）</span>
-              </template>
-              <el-input
-                v-model="form.botToken"
-                type="password"
-                show-password
-                clearable
-                placeholder="BOT_API_TOKEN 或 API_TOKEN"
-                :disabled="submitting"
-              />
-              <div class="xc-login__hint">
-                填 <span class="xc-mono">BOT_API_TOKEN</span>（bot 侧）或
-                <span class="xc-mono">API_TOKEN</span>（写入令牌）。
-                <strong>填了它，这个浏览器就有完整权限</strong>——包括以你的身份发 QQ 消息。
-                它<strong>不会</strong>替代上面的网页令牌：读接口仍然用网页令牌。
-              </div>
-            </el-form-item>
-          </div>
 
           <el-button
             type="primary"
@@ -105,26 +75,29 @@
             :loading="submitting"
             @click="submit"
           >
-            {{ submitting ? '正在验证令牌…' : '登录' }}
+            {{ submitting ? '正在校验令牌…' : '登录' }}
           </el-button>
         </el-form>
 
+        <div class="xc-login__switch">
+          还没有令牌？
+          <router-link to="/register" class="xc-login__link">去注册 / 换一个新令牌</router-link>
+        </div>
+
         <div class="xc-login__footer">
           <p>
-            令牌是<strong>网页令牌</strong> <span class="xc-mono">WEB_API_TOKEN</span>，
-            登录后存在这台浏览器的 storage 里。
+            <strong>令牌丢了怎么办</strong>：没有邮箱、也没有密保，能证明身份的还是那个 QQ 号。
+            所以在 QQ 上给机器人发一次 <span class="xc-mono">/注册</span> 拿到新验证码，
+            再走一遍注册页，就会<strong>给你换一个新令牌</strong>（旧的立刻失效）。
+          </p>
+          <p>
+            令牌是明文存在这台浏览器的 storage 里的，
             <strong>任何能在这台浏览器上执行 JS 的东西都能读到它</strong>，
-            因此它只适合私有部署——<strong>不要把端口暴露到公网</strong>。
+            所以别在公共电脑上勾「记住我」。
           </p>
           <p>
-            它<strong>不能</strong>改数据库，也<strong>不能</strong>发 QQ 消息 ——
-            入库和「发送到 QQ」只认管理令牌（bot 侧叫
-            <span class="xc-mono">API_TOKEN</span>），那个只在服务器上。
-            所以就算这个令牌泄露，别人也只能看，改不了、发不了。
-          </p>
-          <p>
-            仍然<strong>不是按用户的账号体系</strong>：所有拿同一个网页令牌登录的人，
-            看到的东西和能做的事完全一样。
+            <strong>不要把服务端令牌（<span class="xc-mono">API_TOKEN</span>）填在这里</strong>：
+            那是 bot 专用的，能读写所有人的数据，前端会直接拒绝它。
           </p>
         </div>
       </el-card>
@@ -143,13 +116,14 @@ import { useAuthStore } from '../stores/auth'
 /**
  * 登录页。
  *
- * 背景：后端所有 `/api` 都要求 `Authorization: Bearer <API_TOKEN>`。
- * 以前是 Docker 里的 nginx 无条件注入 token（任何能访问到 8080 端口的人都能进来），
- * 现在改成认证在前端做：nginx 原样转发浏览器带的 `Authorization`，所以必须由用户输入令牌。
+ * 没有单独的登录接口：**UserToken 本身就是会话**。所以这里是
+ * 「粘贴令牌 → `GET /api/me` 校验 → 通过就进应用」。
  *
- * 校验失败（401/403）不放行；后端不可达或 5xx 时**仍然放行**——
- * 后端挂着的时候，用户最需要看的就是状态页（那里正显示「后端不可达」），
- * 把登录卡死反而让人没法诊断。
+ * 三种失败要分开处理：
+ *   - 401（令牌无效/已过期）→ 不放行，提示重新获取；
+ *   - 200 但 `scope=service`（粘了服务端令牌）→ 不放行，说清楚这是 bot 的令牌；
+ *   - 后端不可达 / 5xx → **仍然放行**。后端挂着的时候用户最需要看的就是状态页
+ *     （那里正显示「后端不可达」），把登录卡死反而让人没法诊断。
  */
 const authStore = useAuthStore()
 const router = useRouter()
@@ -160,20 +134,15 @@ const submitting = ref(false)
 const errorText = ref('')
 const warningText = ref('')
 
-/** 默认勾上「记住我」：这是个自用控制台，天天输令牌很烦 */
-const form = ref({ token: '', botToken: '', remember: true })
-/** 高级区折叠状态：默认收起，避免让「只有一个密钥」这件事看起来更复杂 */
-const advanced = ref(false)
+/** 默认勾上「记住我」：这是个自用控制台，天天粘令牌很烦 */
+const form = ref({ token: '', remember: true })
 
 const rules = {
   token: [
     {
       validator: (_rule, value, callback) => {
-        // 两个都空才拦；只填 bot 令牌也允许（后端 API_TOKEN 留空的部署就是这样）
-        const hasToken = typeof value === 'string' && value.trim() !== ''
-        const hasBotToken = !!(form.value.botToken && form.value.botToken.trim())
-        if (!hasToken && !hasBotToken) callback(new Error('请输入访问令牌'))
-        else callback()
+        if (typeof value === 'string' && value.trim()) callback()
+        else callback(new Error('请输入登录令牌'))
       },
       trigger: 'blur'
     }
@@ -187,8 +156,8 @@ const rules = {
 const redirectTarget = computed(() => {
   const raw = route.query && route.query.redirect ? String(route.query.redirect) : ''
   if (!raw.startsWith('/') || raw.startsWith('//') || raw.includes('\\')) return '/'
-  // 回到 /login 自己会再被守卫弹回首页，不如直接给 '/'
-  if (raw === '/login' || raw.startsWith('/login?')) return '/'
+  // 回到 /login 或 /register 会再被守卫弹回首页，不如直接给 '/'
+  if (raw === '/login' || raw.startsWith('/login?') || raw === '/register') return '/'
   return raw
 })
 
@@ -209,9 +178,9 @@ async function submit() {
 
   submitting.value = true
   try {
-    const result = await authStore.login(form.value.token, form.value.botToken, form.value.remember)
+    const result = await authStore.login(form.value.token, form.value.remember)
     if (!result || !result.ok) {
-      errorText.value = (result && result.error) || 'token 不正确'
+      errorText.value = (result && result.error) || '令牌校验失败'
       return
     }
     if (result.warning) {
@@ -297,12 +266,22 @@ onMounted(() => {
   margin-bottom: 14px;
 }
 
-.xc-login__advanced {
-  padding: 10px 12px 0;
-  margin-bottom: 12px;
-  border: 1px dashed var(--xc-border);
-  border-radius: 8px;
-  background: var(--xc-bg-soft);
+.xc-login__switch {
+  margin-top: 14px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--xc-text-secondary);
+  text-align: center;
+}
+
+.xc-login__link {
+  color: var(--xc-primary);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.xc-login__link:hover {
+  text-decoration: underline;
 }
 
 /* 底部安全提示：小字、灰，但必须能看清 */

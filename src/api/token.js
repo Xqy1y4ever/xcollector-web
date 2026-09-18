@@ -1,9 +1,12 @@
 /**
  * 当前会话令牌的**模块级持有者**（module-holder）。
  *
+ * 现在只有**一种**令牌：UserToken（`xc_...`）。它同时是登录凭证和一切后端调用的凭证
+ * —— 后端不认别的（见 xcollector-backend/app/auth.py 的 Scope）。
+ *
  * 为什么需要这个文件（循环依赖）：
- *   - `stores/auth.js` 的 `login()` 要发一个请求去校验 token，所以它必须 import `api/client.js`；
- *   - 而 `api/client.js` 的请求拦截器又要知道「现在该带哪个 token」，也就是要读 auth store。
+ *   - `stores/auth.js` 的登录要发请求去校验令牌，所以它必须 import `api/client.js`；
+ *   - 而 `api/client.js` 的请求拦截器又要知道「现在该带哪个令牌」，也就是要读 auth store。
  *   两边互相 import 就成环了。
  *
  * 这里选的是**模块级 holder**，而不是「在拦截器里延迟调用 useAuthStore()」：
@@ -12,47 +15,34 @@
  *   2. 拦截器在**请求发生的那一刻**读值，而不是在模块加载时读——登录后立刻生效，无需刷新；
  *      登出/401 清空后也一样立刻生效。
  *   3. Pinia 的 active pinia 只在组件/`app.use(pinia)` 之后才存在；拦截器有可能在
- *      Pinia 装好之前就被触发（例如 main.js 里的 restore 探针），延迟调用 store 会抛
- *      「no active Pinia」。holder 是纯变量，没有这个雷。
+ *      Pinia 装好之前就被触发。holder 是纯变量，没有这个雷。
  *
- * ⚠️ 安全：这里存的仍然是**明文共享密钥**，只是从「构建期内联」改成「运行时放在内存/浏览器
- * storage 里」。它不是完整鉴权，真正的边界依旧是不要把端口暴露到公网（见 README「认证」）。
+ * ⚠️ 刻意**没有** `VITE_API_TOKEN` 这类构建期内联的兜底令牌。
+ * 旧版本靠它跳过登录页，但多用户之后能填的只有服务令牌（`API_TOKEN`）——
+ * 那等于把「以 bot 身份读写所有人的数据」烧进 JS bundle。宁可让开发时多贴一次令牌，
+ * 也不留这条路径。
+ *
+ * ⚠️ 即使是用户令牌，它也是**明文**存在浏览器 storage 里的。它不是完整鉴权，
+ * 真正的边界依旧是不要让后端直接暴露到公网（见 README「认证」）。
  */
 
-/** store 没恢复过任何 token 时的兜底：构建期内联的预置令牌（开发 / CI 用），可为空串 */
-export const ENV_TOKEN = import.meta.env.VITE_API_TOKEN || ''
+/** 当前生效的用户令牌；空串 = 未登录 */
+let activeToken = ''
 
-/** 管理令牌的预置值（开发 / CI 用）；通常留空，它不该出现在构建产物里 */
-export const ENV_BOT_TOKEN = import.meta.env.VITE_BOT_API_TOKEN || ''
-
-/** 当前生效的后端令牌（`/api` 用） */
-let activeToken = ENV_TOKEN
-
-/** 当前生效的 bot 令牌（`/bot` 用） */
-let activeBotToken = ENV_BOT_TOKEN
-
-/** 取后端令牌；store 里没有时回退到预置的 `VITE_API_TOKEN` */
+/** 取当前用户令牌；没有就返回空串（请求层据此不加 Authorization 头） */
 export function getActiveToken() {
-  return activeToken || ENV_TOKEN
-}
-
-/** 取 bot 令牌；store 里没有时先回退 store 的 token，再回退 `VITE_BOT_API_TOKEN` */
-export function getActiveBotToken() {
-  return activeBotToken || activeToken || ENV_BOT_TOKEN
+  return activeToken
 }
 
 /**
  * 由 auth store 调用：写入当前生效的令牌。
- * @param {string} token 网页令牌（后端与 bot 的读接口都用它），空串表示「没有」
- * @param {string} [botToken] 可选的管理令牌；留空表示"这个浏览器只有网页权限"
+ * @param {string} token 用户令牌（`xc_...`），空串表示「没有」
  */
-export function setActiveTokens(token, botToken) {
-  activeToken = token || ''
-  activeBotToken = botToken || ''
+export function setActiveToken(token) {
+  activeToken = typeof token === 'string' ? token : ''
 }
 
-/** 由 auth store 调用：清空（登出 / 401）。清空后回落到 env 预置值 */
-export function clearActiveTokens() {
+/** 由 auth store 调用：清空（登出 / 令牌失效） */
+export function clearActiveToken() {
   activeToken = ''
-  activeBotToken = ''
 }

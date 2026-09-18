@@ -5,6 +5,8 @@ import { registerRouter } from './navigation'
 import NotificationBoard from '../views/NotificationBoard.vue'
 import HealthView from '../views/HealthView.vue'
 import LoginView from '../views/LoginView.vue'
+import RegisterView from '../views/RegisterView.vue'
+import SubscriptionsView from '../views/SubscriptionsView.vue'
 
 const routes = [
   {
@@ -15,10 +17,23 @@ const routes = [
     meta: { title: '登录', public: true }
   },
   {
+    path: '/register',
+    name: 'register',
+    component: RegisterView,
+    // 注册也是公开页：注册的前提就是「还没有令牌」
+    meta: { title: '注册', public: true }
+  },
+  {
     path: '/',
     name: 'board',
     component: NotificationBoard,
     meta: { title: '通知台' }
+  },
+  {
+    path: '/subscriptions',
+    name: 'subscriptions',
+    component: SubscriptionsView,
+    meta: { title: '订阅管理' }
   },
   {
     path: '/health',

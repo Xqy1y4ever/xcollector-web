@@ -8,6 +8,7 @@
         </router-link>
         <nav class="xc-header__nav">
           <router-link to="/" class="xc-header__link">通知台</router-link>
+          <router-link to="/subscriptions" class="xc-header__link">订阅管理</router-link>
           <router-link to="/health" class="xc-header__link">系统状态</router-link>
         </nav>
       </div>
@@ -41,17 +42,25 @@
         </el-button>
 
         <!--
-          退出：登出后跳登录页。
-          用 el-dropdown 而不是再放一个按钮：移动端顶栏只有 48px 高（见下方 media query），
+          账号下拉：显示「现在是谁」+ 退出。
+          用 el-dropdown 而不是多放一个按钮：移动端顶栏只有 48px 高（见下方 media query），
           横向再挤一个「退出」会把标题和状态点压变形；下拉触发器做成一个小图标即可。
         -->
         <el-dropdown trigger="click" @command="onCommand">
-          <span class="xc-header__account" title="账号">
-            <el-icon><SwitchButton /></el-icon>
+          <span class="xc-header__account" :title="`当前账号：${accountName}`">
+            <el-icon><User /></el-icon>
+            <span class="xc-header__account-name">{{ accountName }}</span>
           </span>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item command="logout">
+              <el-dropdown-item disabled>
+                <span class="xc-mono">{{ accountHint }}</span>
+              </el-dropdown-item>
+              <el-dropdown-item command="subscriptions">
+                <el-icon style="margin-right: 6px"><Star /></el-icon>
+                订阅管理
+              </el-dropdown-item>
+              <el-dropdown-item command="logout" divided>
                 <el-icon style="margin-right: 6px"><SwitchButton /></el-icon>
                 退出登录
               </el-dropdown-item>
@@ -66,7 +75,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Bell, Refresh, SwitchButton } from '@element-plus/icons-vue'
+import { Bell, Refresh, Star, SwitchButton, User } from '@element-plus/icons-vue'
 
 import { useAuthStore } from '../stores/auth'
 import { useHealthStore } from '../stores/health'
@@ -87,16 +96,32 @@ const healthStore = useHealthStore()
 const authStore = useAuthStore()
 
 /**
- * 兜底：`/login` 这类公开页不该出现顶栏（登录页的 view 本来就没引用这个组件）。
+ * 兜底：`/login`、`/register` 这类公开页不该出现顶栏（那两个 view 本来就没引用这个组件）。
  * 万一以后有公开页复用了顶栏，这里直接不渲染，避免在未登录状态泄露系统状态点。
  */
 const visible = computed(() => !(route.meta && route.meta.public))
 
-/** 退出：清空登录态 → 回登录页。用 replace，避免「后退」回到已登出的页面 */
+/** 当前账号：显示名 → QQ 号 → 令牌提示（`/api/me` 还没回来时就是最后那个兜底） */
+const accountName = computed(() => authStore.displayName)
+
+/** 下拉里那行小字：能对上是哪个令牌，用来排查"我是不是登错号了" */
+const accountHint = computed(() => {
+  const u = authStore.user || {}
+  if (!u.id) return '（用户信息还没取到）'
+  const qq = u.qq ? `QQ ${u.qq}` : '未知 QQ'
+  const hint = u.token_hint ? ` · ${u.token_hint}` : ''
+  return `${qq}${hint}`
+})
+
+/** 下拉菜单：退出（清空登录态 → 回登录页）、跳订阅管理 */
 function onCommand(command) {
-  if (command !== 'logout') return
-  authStore.logout()
-  router.replace({ path: '/login' })
+  if (command === 'logout') {
+    // 用 replace，避免「后退」回到已登出的页面
+    authStore.logout()
+    router.replace({ path: '/login' })
+    return
+  }
+  if (command === 'subscriptions') router.push('/subscriptions')
 }
 
 /** 每秒 tick 一次，让「10 秒前」自己走字 */
@@ -269,18 +294,27 @@ watch(
   gap: 10px;
 }
 
-/* 账号下拉触发器：一个紧凑的方形图标按钮，移动端顶栏 48px 也放得下 */
+/* 账号下拉触发器：一个小图标 + 当前账号名，移动端只留图标 */
 .xc-header__account {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 28px;
+  gap: 4px;
+  max-width: 160px;
   height: 28px;
+  padding: 0 6px;
   border-radius: 6px;
   color: var(--xc-text-regular);
+  font-size: 12px;
   cursor: pointer;
   outline: none;
   user-select: none;
+}
+
+.xc-header__account-name {
+  max-width: 110px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .xc-header__account:hover {
@@ -319,7 +353,7 @@ watch(
     font-size: 11px;
   }
 
-  /* 移动端再收一点：48px 高度里「刷新」按钮 + 退出图标不能挤掉状态点 */
+  /* 移动端再收一点：48px 高度里「刷新」按钮 + 账号图标不能挤掉状态点 */
   .xc-header__right {
     gap: 4px;
   }
@@ -327,6 +361,13 @@ watch(
   .xc-header__account {
     width: 24px;
     height: 24px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  /* 位置不够，账号只留图标 */
+  .xc-header__account-name {
+    display: none;
   }
 }
 </style>

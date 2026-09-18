@@ -51,6 +51,8 @@ export const EMPTY_BOT_STATUS = {
   },
   groups: [],
   gap_alerts: [],
+  // 分用户的清单；空数组 = 页面不显示下钻表格（旧版 bot 不给这个字段）
+  per_user: [],
   backend: { reachable: false, base_url: '' },
   digest: { enabled: false, time: '', target_qq: '', sent_today: false },
   day: '',
@@ -66,6 +68,35 @@ export function toCount(value) {
 
 function isPlainObject(v) {
   return !!v && typeof v === 'object' && !Array.isArray(v)
+}
+
+/**
+ * bot `status.per_user` 的一行 → 表格要用的形状（缺字段一律收敛成安全默认值）。
+ *
+ * 注意这些数字**不是全站量**：一条消息扇给 N 个人就会替 N 个人各算一次，
+ * 所以它们只能竖着看（某个人今天怎么样），不能横着加（那会重复计数）。
+ * 返回 null = 这条没有 user_id，展示不出来，直接丢掉。
+ */
+export function normalizePerUserRow(raw) {
+  if (!isPlainObject(raw)) return null
+  const userId = raw.user_id === undefined || raw.user_id === null ? '' : String(raw.user_id)
+  if (!userId) return null
+  const stat = isPlainObject(raw.stat) ? raw.stat : {}
+  return {
+    user_id: userId,
+    qq: raw.qq === undefined || raw.qq === null ? '' : String(raw.qq),
+    display_name: str(raw.display_name),
+    conflict_count: toCount(raw.conflict_count),
+    low_confidence_count: toCount(raw.low_confidence_count),
+    open_gap_alerts: toCount(raw.open_gap_alerts),
+    digest_sent_today: !!raw.digest_sent_today,
+    // stat 是后端累加的 pipeline_stat；没有就是"无统计"，而不是"0 条"
+    stat_available: !!raw.stat_available,
+    ingested: toCount(stat.ingested),
+    extracted: toCount(stat.extracted),
+    unparsed: toCount(stat.unparsed),
+    conflicts: toCount(stat.conflicts)
+  }
 }
 
 function str(value) {
@@ -130,6 +161,11 @@ export function normalizeBotStatus(raw) {
     },
     groups: Array.isArray(data.groups) ? data.groups.filter(isPlainObject) : [],
     gap_alerts: Array.isArray(data.gap_alerts) ? data.gap_alerts.filter(isPlainObject) : [],
+    // 多用户之后「盲区有几个」不再是一个数：per_user 是**分用户**的清单。
+    // 旧版 bot 不给这个字段 → 空数组，页面据此不显示下钻表格（不误报成「0 人」）。
+    per_user: Array.isArray(data.per_user)
+      ? data.per_user.filter(isPlainObject).map(normalizePerUserRow).filter(Boolean)
+      : [],
     backend: {
       reachable: !!(data.backend && data.backend.reachable),
       base_url: str(data.backend && data.backend.base_url)

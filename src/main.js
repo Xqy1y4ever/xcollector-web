@@ -29,7 +29,19 @@ app.use(router)
 // Pinia state 还是空的。不先恢复的话，路由守卫会把已登录的人当成未登录踢去 /login。
 // 这一步同时把令牌同步给请求层（src/api/token.js 的模块级持有者）。
 // 注意：必须在 app.use(createPinia()) 之后调用，否则没有 active pinia。
-useAuthStore().restore()
+const authStore = useAuthStore()
+authStore.restore()
+
+// 有令牌就**真的去问一次后端「我是谁」**（GET /api/me）。
+// 这是「粘贴一个坏令牌 / 令牌已被轮换」的唯一发现时机：401 时请求层会清掉登录态
+// 并跳回登录页；只是后端不可达的话不做任何处理（否则后端一挂，所有人都被踢出去）。
+// 不 await：让首屏立刻出来，校验结果异步生效。
+// 路由守卫会在首屏再触发一次同样的校验，store 里把并发调用收敛成同一个请求。
+if (authStore.isAuthenticated) {
+  authStore.verifySession().catch(() => {
+    // 校验链路自己已经处理了 401；这里只是不让它变成未处理的 Promise 拒绝
+  })
+}
 
 // 兜底：任何未捕获异常都不允许把页面打成白屏
 app.config.errorHandler = (err, _vm, info) => {
