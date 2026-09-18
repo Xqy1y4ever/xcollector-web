@@ -46,6 +46,15 @@
 
         <el-button @click="applyFilter">搜索</el-button>
 
+        <el-button
+          :type="selectionMode ? 'primary' : 'default'"
+          :title="selectionMode ? '退出多选，恢复正常点击' : '多选：勾几条一起处理'"
+          @click="toggleSelectionMode"
+        >
+          <el-icon><Select /></el-icon>
+          <span style="margin-left: 4px">{{ selectionMode ? '退出多选' : '多选' }}</span>
+        </el-button>
+
         <div class="xc-toolbar__spacer" />
 
         <el-tag v-if="unreadCount > 0" type="primary" size="small" effect="plain">
@@ -58,6 +67,60 @@
             <span class="xc-muted" style="font-size: 12px">自动刷新</span>
           </span>
         </el-tooltip>
+      </div>
+
+      <!-- 多选操作条：只在多选模式下出现。批量动作全部走这里的按钮，
+           页面上不留"点了没反应"的暗示。 -->
+      <div v-if="selectionMode" class="xc-selectbar">
+        <span class="xc-selectbar__count">
+          已选 <b>{{ selectedCount }}</b> / {{ totalCount }} 条
+          <span class="xc-muted" style="font-size: 12px">
+            （共 {{ totalCount }} 条 = 当前筛选条件下的全部）
+          </span>
+        </span>
+        <el-button size="small" @click="toggleSelectAll">
+          {{ allSelected ? '取消全选' : '全选' }}
+        </el-button>
+        <el-button size="small" :disabled="selectedCount === 0" @click="store.clearSelection()">
+          清空
+        </el-button>
+
+        <div class="xc-toolbar__spacer" />
+
+        <el-button
+          size="small"
+          :loading="mutating"
+          :disabled="selectedCount === 0"
+          @click="batchRead(true)"
+        >
+          标记已读
+        </el-button>
+        <el-button
+          size="small"
+          :loading="mutating"
+          :disabled="selectedCount === 0"
+          @click="batchRead(false)"
+        >
+          标记未读
+        </el-button>
+        <el-button
+          size="small"
+          :loading="mutating"
+          :disabled="selectedCount === 0"
+          @click="batchStatus('done')"
+        >
+          标记完成
+        </el-button>
+        <el-button
+          size="small"
+          type="warning"
+          plain
+          :loading="mutating"
+          :disabled="selectedCount === 0"
+          @click="batchStatus('archived')"
+        >
+          归档
+        </el-button>
       </div>
 
       <!-- 主体 -->
@@ -102,9 +165,10 @@
                   :key="item.id"
                   :notification="item"
                   :now="now"
+                  :selectable="selectionMode"
+                  :selected="store.isSelected(item.id)"
                   @open="openDetail"
-                  @toggle-read="onToggleRead"
-                  @archive="onArchive"
+                  @toggle-select="onToggleSelect"
                 />
               </template>
             </template>
@@ -129,7 +193,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowDown, ArrowRight, Search } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowRight, Search, Select } from '@element-plus/icons-vue'
 
 import AppHeader from '../components/AppHeader.vue'
 import NotificationCard from '../components/NotificationCard.vue'
@@ -157,6 +221,10 @@ const notifications = computed(() => store.notifications)
 const unreadCount = computed(() => store.unreadCount)
 const totalCount = computed(() => store.notifications.length)
 const lastSyncedAt = computed(() => store.lastSyncedAt)
+const selectionMode = computed(() => store.selectionMode)
+const selectedCount = computed(() => store.selectedCount)
+const allSelected = computed(() => store.allSelected)
+const mutating = computed(() => store.mutating)
 
 const groups = computed(() => groupNotifications(store.notifications, now.value))
 
@@ -218,24 +286,75 @@ async function openDetail(id) {
   }
 }
 
-async function onToggleRead(id) {
-  const r = await store.toggleRead(id)
-  if (!r.ok) ElMessage.error(r.message)
+/* ---------------- 多选与批量操作 ---------------- */
+
+function toggleSelectionMode() {
+  store.setSelectionMode(!store.selectionMode)
+  if (store.selectionMode) {
+    ElMessage.info('多选：点卡片勾选，再用上面的按钮一次处理——点「退出多选」恢复正常')
+  }
 }
 
-async function onArchive(id) {
-  try {
-    await ElMessageBox.confirm(
-      '将把这条记录标记为「这不是通知」（status=archived），它不会再出现在默认筛选里。确认？',
-      '这不是通知',
-      { confirmButtonText: '确认归档', cancelButtonText: '取消', type: 'warning' }
-    )
-  } catch (e) {
-    return
+/** 卡片被点：多选模式下就是勾选/取消 */
+function onToggleSelect(id) {
+  store.toggleSelect(id)
+}
+
+function toggleSelectAll() {
+  if (store.allSelected) store.clearSelection()
+  else store.selectAll()
+}
+
+/**
+ * 批量标已读/未读。
+ *
+ * 结果**两个数都报**（成功多少、失败多少）：批量操作最怕"看着像成功、其实几条没改"。
+ * 失败的条目会留在选中状态里，方便直接再点一次重试。
+ */
+async function batchRead(read) {
+  const ids = store.selectedIds.slice()
+  if (!ids.length) return
+  const r = await store.batchSetRead(ids, read)
+  const label = read ? '已读' : '未读'
+  const extra = r.unchanged ? `（另外 ${r.unchanged} 条本来就是${label}）` : ''
+  if (r.ok) {
+    ElMessage.success(`已把 ${r.succeeded} 条标为${label}${extra}`)
+  } else if (r.succeeded > 0) {
+    ElMessage.error(`${r.succeeded} 条已标为${label}，${r.message}（失败的还留着选中，可重试）`)
+  } else {
+    ElMessage.error(r.message || '批量操作失败')
   }
-  const r = await store.archive(id)
-  if (r.ok) ElMessage.success('已归档')
-  else ElMessage.error(r.message)
+}
+
+/** 批量改状态：done = 标记完成，archived = 这不是通知 */
+async function batchStatus(status) {
+  const ids = store.selectedIds.slice()
+  if (!ids.length) return
+  const label = status === 'done' ? '已完成' : '已归档'
+  if (status === 'archived') {
+    try {
+      await ElMessageBox.confirm(
+        `把选中的 ${ids.length} 条标记为「这不是通知」（status=archived）？它们不会再出现在默认筛选里。`,
+        '这不是通知',
+        { confirmButtonText: '确认归档', cancelButtonText: '取消', type: 'warning' }
+      )
+    } catch (e) {
+      return
+    }
+  }
+  const r = await store.batchSetStatus(ids, status)
+  const extra = r.unchanged ? `（另外 ${r.unchanged} 条本来就是）` : ''
+  if (r.ok) {
+    ElMessage.success(`已把 ${r.succeeded} 条标记为「${label}」${extra}`)
+    // 带着状态筛选时，改完的条目已经不属于这个筛选条件了 —— 立刻重拉一次，
+    // 免得它们在页面上赖着不走（看起来像"改了没用"）。
+    if (statusFilter.value !== 'all') await store.load()
+  } else if (r.succeeded > 0) {
+    ElMessage.error(`${r.succeeded} 条已标记为「${label}」，${r.message}（失败的还留着选中，可重试）`)
+    if (statusFilter.value !== 'all') await store.load()
+  } else {
+    ElMessage.error(r.message || '批量操作失败')
+  }
 }
 
 onMounted(() => {

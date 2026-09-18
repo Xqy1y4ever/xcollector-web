@@ -3,10 +3,23 @@
     class="xc-card"
     :class="{
       'xc-card--archived': notification.status === 'archived',
-      'xc-card--done': notification.status === 'done'
+      'xc-card--done': notification.status === 'done',
+      'xc-card--selectable': selectable,
+      'xc-card--selected': selectable && selected
     }"
-    @click="emit('open', notification.id)"
+    :role="selectable ? 'checkbox' : undefined"
+    :aria-checked="selectable ? String(selected) : undefined"
+    @click="onCardClick"
   >
+    <!-- 多选模式：左侧勾选框。点它**不**冒泡到整卡（否则一次点击会切换两次） -->
+    <div v-if="selectable" class="xc-card__check" @click.stop>
+      <el-checkbox
+        :model-value="selected"
+        :aria-label="`选择「${notification.title}」`"
+        @change="emit('toggle-select', notification.id)"
+      />
+    </div>
+
     <!-- 左侧固定宽度 DDL 列：3px 色条 + 上行日期 + 下行时间 -->
     <div class="xc-due" :class="`xc-due--${due.level}`">
       <div class="xc-due__date" :title="due.dateFull">{{ due.dateTop }}</div>
@@ -45,7 +58,11 @@
           <span v-if="notification.conflict" class="xc-tag xc-tag--danger">DDL 冲突</span>
           <span v-if="notification.manually_edited" class="xc-tag xc-tag--success">已人工确认</span>
           <span v-if="isLowConfidence" class="xc-tag xc-tag--info">待确认</span>
-          <span class="xc-card__link">原文对照 ›</span>
+          <!-- 多选模式下点卡片是"勾选"，不是"打开"，所以这个提示必须收起来（否则是句假话） -->
+          <span v-if="!selectable" class="xc-card__link">原文对照 ›</span>
+          <span v-else class="xc-card__link xc-card__link--muted">
+            {{ selected ? '已选中' : '点击勾选' }}
+          </span>
         </div>
       </div>
     </div>
@@ -65,6 +82,9 @@ import { buildCardMetaText } from '../utils/notificationText'
  * 代价是「一眼看到结论依据」变成「点开才看到」，所以 conflict /
  * 低置信度这两类风险必须在卡片上保持醒目（见第三行的标签）。
  * 颜色分级统一走 utils/time.js 的 dueLevel()，这里不做任何重复判断。
+ *
+ * 多选（`selectable`）时整卡变成"勾选框"：点卡片 = 选中/取消，**不再打开详情**。
+ * 所以"打开详情"这件事必须在退出多选之后做（板子上的按钮负责切换模式）。
  */
 const props = defineProps({
   notification: {
@@ -74,10 +94,28 @@ const props = defineProps({
   now: {
     type: Number,
     default: () => Date.now()
+  },
+  /** 多选模式：显示勾选框，点卡片 = 勾选 */
+  selectable: {
+    type: Boolean,
+    default: false
+  },
+  /** 这一条当前选中了吗（只在 selectable 时有意义） */
+  selected: {
+    type: Boolean,
+    default: false
   }
 })
 
-const emit = defineEmits(['open', 'toggle-read', 'archive'])
+const emit = defineEmits(['open', 'toggle-select'])
+
+function onCardClick() {
+  if (props.selectable) {
+    emit('toggle-select', props.notification.id)
+    return
+  }
+  emit('open', props.notification.id)
+}
 
 const dueMs = computed(() => toMillis(props.notification.due_at))
 

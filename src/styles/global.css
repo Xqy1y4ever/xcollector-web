@@ -158,6 +158,38 @@ body {
   opacity: 0.68;
 }
 
+/* --- 多选模式 ---
+ * 勾选框单独一列（不占 DDL 列的位置：DDL 列的宽度是排版基线，不动它）。
+ * 选中时整卡描边 + 极浅底色 —— 勾选框本身太小，一眼扫过容易漏。
+ */
+.xc-card--selectable {
+  cursor: pointer;
+}
+
+.xc-card__check {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding-right: 2px;
+}
+
+/* el-checkbox 默认 32px 高会把卡片撑高，这里让它跟随卡片内容高度 */
+.xc-card__check .el-checkbox {
+  height: auto;
+  margin-right: 0;
+}
+
+.xc-card--selected {
+  border-color: var(--el-color-primary, #409eff);
+  background: #f2f7ff;
+  box-shadow: 0 0 0 1px var(--el-color-primary, #409eff) inset;
+}
+
+.xc-card__link--muted {
+  color: var(--xc-muted, #909399);
+  font-weight: 400;
+}
+
 @media (max-width: 768px) {
   .xc-card {
     gap: 10px;
@@ -687,6 +719,28 @@ mark.xc-hit {
   gap: 10px;
   flex-wrap: wrap;
   margin: 12px 0 4px;
+}
+
+/* 多选操作条：贴着工具栏下方，把"已选几条 / 能做什么"一次性说清 */
+.xc-selectbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0 4px;
+  padding: 8px 12px;
+  background: #f5f7fa;
+  border: 1px solid var(--xc-border, #e4e7ed);
+  border-radius: 8px;
+}
+
+.xc-selectbar__count {
+  font-size: 13px;
+}
+
+.xc-selectbar__count b {
+  color: var(--el-color-primary, #409eff);
+  font-variant-numeric: tabular-nums;
 }
 
 .el-drawer__body {

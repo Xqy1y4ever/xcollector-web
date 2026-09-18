@@ -9,7 +9,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "serve": "vite preview"
+    "serve": "vite preview",
+    "test": "npm run test:store",
+    "test:store": "node --import ./tests/extension-loader.mjs tests/store-check.mjs"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.1",

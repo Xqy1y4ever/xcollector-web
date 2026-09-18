@@ -39,9 +39,16 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: 装依赖并构建
+      - name: 装依赖
+        run: npm ci
+
+      # 自检放在构建**之前**：它抓的是"增量刷新把列表换成增量那几条"这类
+      # 眼睛看不出来的错（要等一轮自动刷新才显形）。跑不动就不该出包。
+      - name: 自检（store：增量合并 / 多选 / 批量操作）
+        run: npm test
+
+      - name: 构建
         run: |
-          npm ci
           npm run build
           test -f dist/index.html
 
