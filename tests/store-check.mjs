@@ -142,6 +142,16 @@ async function adapter(config) {
     return { data: { read: row.read }, status: 200, statusText: 'OK', headers: {}, config }
   }
 
+  // DELETE /notifications/{id} —— 真删（后端只删通知行；不存在/别人的 → 404）
+  const delMatch = url.match(/^\/notifications\/([^/]+)$/)
+  if (method === 'delete' && delMatch) {
+    const id = decodeURIComponent(delMatch[1])
+    if (failing.has(id)) throw badRequest(500, '后端炸了')
+    if (!rows.has(id)) throw badRequest(404, '通知不存在')
+    rows.delete(id)
+    return { data: { deleted: true }, status: 200, statusText: 'OK', headers: {}, config }
+  }
+
   const corrMatch = url.match(/^\/notifications\/([^/]+)\/corrections$/)
   if (method === 'post' && corrMatch) {
     const id = decodeURIComponent(corrMatch[1])
@@ -393,6 +403,41 @@ await store.openDetail('6')
 check('详情能打开', !!store.detail, true)
 check('列表条数没被详情接口搞乱', store.notifications.length, countBeforeDetail)
 ok('那条还在列表里', !!store.getById('6'))
+
+/* ---------------- 8. 批量删除（真删，和归档是两件事） ---------------- */
+
+console.log('\n--- 8. 批量删除 ---')
+const beforeDelete = store.notifications.map((n) => n.id)
+check('删之前列表里有 7 条', beforeDelete.length, 7)
+
+// 8a. 全成功：本地去掉、后端也没了、选中集清空
+store.setSelectionMode(true)
+store.setSelected(['6', '7'])
+let del = await store.batchDelete(['6', '7'])
+check('两条都删掉', [del.ok, del.succeeded, del.failed.length], [true, 2, 0])
+check(
+  '本地列表跟着去掉（不然页面上还在，看着像没删掉）',
+  store.notifications.map((n) => n.id),
+  beforeDelete.filter((id) => id !== '6' && id !== '7')
+)
+check('后端那边真的没了', rows.has('6'), false)
+check('成功后清空选择集', store.selectedIds, [])
+
+// 8b. 部分失败：成功的去掉，失败的原样留着并保持选中（可重试）
+failing.add('5')
+store.setSelected(['5'])
+del = await store.batchDelete(['5'])
+check('失败如实报告', [del.ok, del.succeeded, del.failed.map((f) => f.id)], [false, 0, ['5']])
+check('失败的那条还在列表里', !!store.getById('5'), true)
+check('而且留在选中集里', store.selectedIds, ['5'])
+failing.delete('5')
+
+// 8c. 后端已经没有这条（404）→ 本地跟着去掉，**不算失败**（别人删过/自己删过）
+rows.delete('4')
+del = await store.batchDelete(['5', '4'])
+check('404 按"已经没了"处理', [del.ok, del.succeeded, del.failed.length], [true, 2, 0])
+check('本地都清掉了', !!store.getById('4'), false)
+check('列表里只剩 3 条', store.notifications.length, 3)
 
 console.log()
 if (failures) {

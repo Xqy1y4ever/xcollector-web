@@ -5,6 +5,7 @@ import {
   fetchNotificationDetail,
   submitCorrection,
   setNotificationRead,
+  deleteNotification,
   humanizeError,
   isOfflineError,
   BACKEND_DOWN_MESSAGE
@@ -398,6 +399,70 @@ export const useNotificationsStore = defineStore('notifications', {
         message: failed.length
           ? `${failed.length} 条没改成（${failed[0].message}）`
           : ''
+      }
+    },
+
+    /**
+     * 批量**删除**选中的任务。真删（`DELETE /api/notifications/{id}`），
+     * 与「归档」是两件事：归档只改 status、不丢数据；删除是把通知行删掉。
+     *
+     * 几条刻意的做法：
+     *   · 逐条发（后端没有批量接口），并发限 4 路；
+     *   · 删成功的那条**从本地列表里去掉**（否则它还在页面上，看着像没删掉），
+     *     正开着的详情抽屉也一起关掉；
+     *   · 后端回 **404** 的按"已经没了"处理（别人删过/自己删过）—— 本地也去掉，
+     *     不当失败；
+     *   · 失败的留在选中集里方便重试，并把成败两个数都报出来。
+     *
+     * @returns {Promise<{ok: boolean, succeeded: number, failed: Array<{id: string, message: string}>}>}
+     */
+    async batchDelete(ids) {
+      const list = (Array.isArray(ids) ? ids : []).map((id) => this.getById(id)).filter(Boolean)
+      if (!list.length) {
+        return { ok: false, succeeded: 0, failed: [], message: '本地找不到这些通知（可能刚被刷新掉了）' }
+      }
+      this.mutating = true
+      let results = []
+      try {
+        results = await runLimited(list, 4, (n) => deleteNotification(n.id))
+      } finally {
+        this.mutating = false
+      }
+
+      const gone = []
+      const failed = []
+      results.forEach((r, index) => {
+        const target = list[index]
+        if (r.ok) {
+          gone.push(target.id)
+          return
+        }
+        const status = r.error && r.error.response ? r.error.response.status : 0
+        if (status === 404) {
+          // 后端说"没有这条" —— 目标状态已经达成，本地跟着去掉，但如实记一笔日志
+          gone.push(target.id)
+          return
+        }
+        failed.push({ id: target.id, message: humanizeError(r.error) })
+      })
+
+      if (gone.length) {
+        const removed = new Set(gone)
+        this.notifications = this.notifications.filter((n) => !removed.has(n.id))
+        this.selectedIds = this.selectedIds.filter((id) => !removed.has(id))
+        if (this.activeId && removed.has(this.activeId)) this.closeDetail()
+      }
+      if (failed.length) {
+        const failedIds = new Set(failed.map((f) => f.id))
+        this.selectedIds = this.selectedIds.filter((id) => failedIds.has(id))
+      } else {
+        this.clearSelection()
+      }
+      return {
+        ok: failed.length === 0,
+        succeeded: gone.length,
+        failed,
+        message: failed.length ? `${failed.length} 条没删掉（${failed[0].message}）` : ''
       }
     },
 

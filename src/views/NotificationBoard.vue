@@ -121,6 +121,18 @@
         >
           归档
         </el-button>
+        <!-- 删除是**真删**（后端把那条通知行删掉），所以用 danger 色放最后，
+             点下去先弹一个把"删除 vs 归档"讲清楚的确认框 -->
+        <el-button
+          size="small"
+          type="danger"
+          plain
+          :loading="mutating"
+          :disabled="selectedCount === 0"
+          @click="batchDelete"
+        >
+          删除
+        </el-button>
       </div>
 
       <!-- 主体 -->
@@ -355,6 +367,40 @@ async function batchStatus(status) {
   } else {
     ElMessage.error(r.message || '批量操作失败')
   }
+}
+
+/**
+ * 批量**删除**选中的任务（真删）。
+ *
+ * 确认框里必须把"删除"和"归档"的差别讲清楚 —— 这是两个按钮、两种后果：
+ * 归档只改状态（切到「已归档」还看得到、原文与修正史都在）；
+ * 删除是后端把那条通知行删掉，页面上就没了。
+ */
+async function batchDelete() {
+  const ids = store.selectedIds.slice()
+  if (!ids.length) return
+  try {
+    await ElMessageBox.confirm(
+      `删掉选中的 ${ids.length} 条任务？\n\n` +
+        '· 这是**真删**：后端把那条通知行删掉，删完不在页面上显示了；原始聊天记录还在后端。\n' +
+        '· 只是想让它从列表里消失、又想留痕 → 用旁边的「归档」。\n' +
+        '· 删掉之后，如果以后给这条消息「标为未读」重抽，会重新建一条。',
+      '删除任务',
+      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch (e) {
+    return
+  }
+  const r = await store.batchDelete(ids)
+  if (r.ok) {
+    ElMessage.success(`已删除 ${r.succeeded} 条`)
+  } else if (r.succeeded > 0) {
+    ElMessage.error(`已删除 ${r.succeeded} 条，${r.message}（失败的还留着选中，可重试）`)
+  } else {
+    ElMessage.error(r.message || '删除失败')
+  }
+  // 带筛选时（比如"已归档"视图）删完可能和筛选条件对不上，重拉一次保持一致
+  if (statusFilter.value !== 'all') await store.load()
 }
 
 onMounted(() => {

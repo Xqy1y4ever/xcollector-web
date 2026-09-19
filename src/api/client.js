@@ -216,6 +216,21 @@ export async function setNotificationRead(id, read) {
   return data
 }
 
+/**
+ * DELETE /api/notifications/{id} —— **真删**那条通知。
+ *
+ * 和「归档」（corrections 把 status 改成 archived）是两件事，别混：
+ *   · 归档：只改状态、不丢数据，前端切「已归档」还看得到；
+ *   · 删除：后端把通知行删掉（只追加层 —— correction / read_state —— 不动）。
+ *
+ * 权限：用户令牌**可以**删自己那条（SQL 里带着 user_id），别人的或不存在的都回 404，
+ * 而且不区分这两者（否则能拿它探测"某个 id 存在吗"）。见后端 docs/api.md 的权限表。
+ */
+export async function deleteNotification(id) {
+  const { data } = await http.delete(`/notifications/${encodeURIComponent(id)}`)
+  return data
+}
+
 /* ------------------------------------------------------------------ *
  * 存储健康（「后端可达性」探针）
  * ------------------------------------------------------------------ */
@@ -265,6 +280,7 @@ export default {
   fetchNotificationDetail,
   submitCorrection,
   setNotificationRead,
+  deleteNotification,
   fetchBackendHealth,
   attachmentUrl,
   applyBearerToken,
